@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mangrove Detection Platform</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"
+        crossorigin="" />
+
+    <!-- Leaflet Side-by-Side CSS -->
+    <style>
+        .leaflet-sbs {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 800;
+            pointer-events: none;
+        }
+        .leaflet-sbs-range {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            left: 0;
+            width: 100%;
+            height: 60px;
+            z-index: 801;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            cursor: ew-resize;
+            pointer-events: auto;
+            margin: 0;
+            padding: 0;
+        }
+        .leaflet-sbs-range:focus {
+            outline: none;
+        }
+        .leaflet-sbs-range::-webkit-slider-runnable-track {
+            background: transparent;
+            height: 60px;
+        }
+        .leaflet-sbs-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            cursor: ew-resize;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+            border: 3px solid white;
+            margin-top: 16px;
+        }
+        .leaflet-sbs-range::-moz-range-track {
+            background: transparent;
+            height: 60px;
+        }
+        .leaflet-sbs-range::-moz-range-thumb {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            cursor: ew-resize;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+            border: 3px solid white;
+        }
+        .leaflet-sbs-divider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            margin-left: -1.5px;
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 0 15px rgba(102, 126, 234, 0.5);
+            z-index: 800;
+            pointer-events: none;
+        }
+    </style>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+    <!-- Full Screen Map Container -->
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+
+    <!-- Top Header Bar -->
+    <div id="header-bar">
+        <div class="header-left">
+            <h1>🛰️ Mangrove Detection Platform</h1>
+        </div>
+        <div class="header-right">
+            <div id="notification" class="notification hidden"></div>
+        </div>
+    </div>
+
+    <!-- Left Control Panel with Tabs -->
+    <div id="control-panel" class="panel">
+        <div class="panel-header">
+            <h3>🎯 Mangrove Analysis</h3>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-btn active" data-tab="search">🛰️ Satellite Search</button>
+            <button class="tab-btn" data-tab="analysis" id="analysis-tab">📊 Analysis Results</button>
+            <button class="tab-btn" data-tab="change-monitoring" id="change-monitoring-tab">📈 Change
+                Monitoring</button>
+        </div>
+
+        <div class="panel-content">
+            <!-- Search Tab Content -->
+            <div id="search-tab-content" class="tab-content active">
+                <div class="control-group">
+                    <label>Draw AOI on Map:</label>
+                    <div class="draw-controls">
+                        <div class="draw-controls">
+                            <button id="draw-rectangle" class="control-btn primary">
+                                📍 Draw AOI
+                            </button>
+
+                            <!-- Drag and Drop Zone -->
+                            <div id="drop-zone" class="drop-zone">
+                                <input type="file" id="shp-upload" accept=".zip,.kml" class="hidden-input">
+                                <div class="drop-zone-content">
+                                    <span class="drop-icon">📂</span>
+                                    <span class="drop-text">Drop SHP/KML here</span>
+                                    <span class="drop-subtext">(.zip or .kml)</span>
+                                </div>
+                            </div>
+
+                            <button id="clear-drawings" class="control-btn secondary">
+                                🗑️ Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Search Parameters:</label>
+                    <div class="search-params">
+                        <div class="param-row">
+                            <label for="start-date">Start Date:</label>
+                            <input type="date" id="start-date" class="date-input">
+                        </div>
+                        <div class="param-row">
+                            <label for="end-date">End Date:</label>
+                            <input type="date" id="end-date" class="date-input">
+                        </div>
+                        <div class="param-row">
+                            <label for="cloud-cover">Max Cloud Cover:</label>
+                            <input type="range" id="cloud-cover" min="0" max="100" value="20" class="slider">
+                            <span id="cloud-cover-value">20%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-group satellite-selector">
+                    <label>Satellite:</label>
+                    <div class="satellite-buttons">
+                        <button id="satellite-s2-btn" class="satellite-btn active" data-satellite="s2">
+                            🛰️ Sentinel-2 (Optical)
+                        </button>
+                        <button id="satellite-s1-btn" class="satellite-btn" data-satellite="s1">
+                            📡 Sentinel-1 (SAR)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Sentinel-2 Channel Selection (shown by default) -->
+                <div id="s2-channel-options" class="control-group s2-options">
+                    <label>🎨 Optical Visualization (RGB):</label>
+                    <div class="channel-selectors">
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #e74c3c;">R:</span>
+                            <select id="s2-channel-r" class="channel-select">
+                                <option value="B4" selected>B4 (Red)</option>
+                                <option value="B3">B3 (Green)</option>
+                                <option value="B2">B2 (Blue)</option>
+                                <option value="B8">B8 (NIR)</option>
+                                <option value="B11">B11 (SWIR1)</option>
+                                <option value="B12">B12 (SWIR2)</option>
+                                <option value="B5">B5 (Red Edge 1)</option>
+                                <option value="B6">B6 (Red Edge 2)</option>
+                                <option value="B7">B7 (Red Edge 3)</option>
+                                <option value="B8A">B8A (NIR Narrow)</option>
+                            </select>
+                        </div>
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #27ae60;">G:</span>
+                            <select id="s2-channel-g" class="channel-select">
+                                <option value="B4">B4 (Red)</option>
+                                <option value="B3" selected>B3 (Green)</option>
+                                <option value="B2">B2 (Blue)</option>
+                                <option value="B8">B8 (NIR)</option>
+                                <option value="B11">B11 (SWIR1)</option>
+                                <option value="B12">B12 (SWIR2)</option>
+                                <option value="B5">B5 (Red Edge 1)</option>
+                                <option value="B6">B6 (Red Edge 2)</option>
+                                <option value="B7">B7 (Red Edge 3)</option>
+                                <option value="B8A">B8A (NIR Narrow)</option>
+                            </select>
+                        </div>
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #3498db;">B:</span>
+                            <select id="s2-channel-b" class="channel-select">
+                                <option value="B4">B4 (Red)</option>
+                                <option value="B3">B3 (Green)</option>
+                                <option value="B2" selected>B2 (Blue)</option>
+                                <option value="B8">B8 (NIR)</option>
+                                <option value="B11">B11 (SWIR1)</option>
+                                <option value="B12">B12 (SWIR2)</option>
+                                <option value="B5">B5 (Red Edge 1)</option>
+                                <option value="B6">B6 (Red Edge 2)</option>
+                                <option value="B7">B7 (Red Edge 3)</option>
+                                <option value="B8A">B8A (NIR Narrow)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="s2-presets">
+                        <button class="preset-btn s2-preset active" data-preset="truecolor">True Color</button>
+                        <button class="preset-btn s2-preset" data-preset="falsecolor">False Color</button>
+                        <button class="preset-btn s2-preset" data-preset="agriculture">Agriculture</button>
+                        <button class="preset-btn s2-preset" data-preset="swir">SWIR</button>
+                    </div>
+                    <div class="param-row">
+                        <label>Min:</label>
+                        <input type="number" id="s2-min" value="0" class="number-input" style="width: 60px;">
+                        <label>Max:</label>
+                        <input type="number" id="s2-max" value="3000" class="number-input" style="width: 60px;">
+                    </div>
+                    <button id="apply-s2-vis-btn" class="control-btn primary" style="margin-top: 10px; width: 100%;">
+                        🔄 Apply Visualization
+                    </button>
+                </div>
+
+                <!-- Sentinel-1 Channel Selection (hidden by default) -->
+                <div id="s1-channel-options" class="control-group s1-options hidden">
+                    <label>SAR Visualization (RGB):</label>
+                    <div class="channel-selectors">
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #e74c3c;">R:</span>
+                            <select id="s1-channel-r" class="channel-select">
+                                <option value="VV" selected>VV (dB)</option>
+                                <option value="VH">VH (dB)</option>
+                                <option value="angle">Angle</option>
+                            </select>
+                        </div>
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #27ae60;">G:</span>
+                            <select id="s1-channel-g" class="channel-select">
+                                <option value="VV">VV (dB)</option>
+                                <option value="VH" selected>VH (dB)</option>
+                                <option value="angle">Angle</option>
+                            </select>
+                        </div>
+                        <div class="channel-row">
+                            <span class="channel-label" style="color: #3498db;">B:</span>
+                            <select id="s1-channel-b" class="channel-select">
+                                <option value="VV" selected>VV (dB)</option>
+                                <option value="VH">VH (dB)</option>
+                                <option value="angle">Angle</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="s1-presets">
+                        <button class="preset-btn" data-preset="vv">VV only</button>
+                        <button class="preset-btn" data-preset="vh">VH only</button>
+                        <button class="preset-btn active" data-preset="vvvh">VV/VH/VV</button>
+                        <button class="preset-btn" data-preset="ratio">VH/VV Ratio</button>
+                    </div>
+                    <div class="param-row">
+                        <label>Min (dB):</label>
+                        <input type="number" id="s1-min" value="-25" class="number-input" style="width: 60px;">
+                        <label>Max (dB):</label>
+                        <input type="number" id="s1-max" value="0" class="number-input" style="width: 60px;">
+                    </div>
+                    <button id="apply-s1-vis-btn" class="control-btn primary" style="margin-top: 10px; width: 100%;">
+                        🔄 Apply Visualization
+                    </button>
+                </div>
+
+                <div class="control-group">
+                    <button id="search-btn" class="control-btn primary large" disabled>
+                        🔍 Search Satellite Images
+                    </button>
+                </div>
+
+                <!-- Compare Mode Section -->
+                <div id="compare-section" class="control-group compare-section hidden">
+                    <label>🔀 Compare S1 & S2:</label>
+                    <div class="compare-controls">
+                        <div class="compare-select-row">
+                            <span>Left (S2):</span>
+                            <select id="compare-s2-select" class="compare-select">
+                                <option value="">-- Select S2 Image --</option>
+                            </select>
+                        </div>
+                        <div class="compare-select-row">
+                            <span>Right (S1):</span>
+                            <select id="compare-s1-select" class="compare-select">
+                                <option value="">-- Select S1 Image --</option>
+                            </select>
+                        </div>
+                        <button id="compare-btn" class="control-btn primary" disabled>
+                            👁️ Visualize Both
+                        </button>
+                        <button id="compare-exit-btn" class="control-btn secondary hidden">
+                            ✕ Exit Compare
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Inline Search Results - S2 -->
+                <div id="inline-results-s2" class="inline-results hidden" role="region" aria-label="Sentinel-2 Results">
+                    <h3>🛰️ Sentinel-2 Results</h3>
+                    <div id="results-count-s2" class="results-count"></div>
+                    <div id="search-results-s2" class="search-results" tabindex="0">
+                        <!-- S2 Results will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Inline Search Results - S1 -->
+                <div id="inline-results-s1" class="inline-results hidden" role="region" aria-label="Sentinel-1 Results">
+                    <h3>📡 Sentinel-1 Results</h3>
+                    <div id="results-count-s1" class="results-count"></div>
+                    <div id="search-results-s1" class="search-results" tabindex="0">
+                        <!-- S1 Results will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Tab Content -->
+            <div id="analysis-tab-content" class="tab-content">
+                <div class="analysis-list">
+                    <div class="no-analysis-results">
+                        <div class="empty-state-icon">📊</div>
+                        <h4 class="empty-state-title">No Analysis Results</h4>
+                        <p class="empty-state-message">Select an image and click "Process Image" to see analysis results
+                            here.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Change Monitoring Tab Content -->
+            <div id="change-monitoring-tab-content" class="tab-content">
+                <!-- Date Range Selection -->
+                <div class="control-group">
+                    <label>Search Period:</label>
+                    <div class="search-params">
+                        <div class="param-row">
+                            <label for="change-start-date">Start Date:</label>
+                            <input type="date" id="change-start-date" class="date-input">
+                        </div>
+                        <div class="param-row">
+                            <label for="change-end-date">End Date:</label>
+                            <input type="date" id="change-end-date" class="date-input">
+                        </div>
+                        <div class="param-row">
+                            <label for="change-cloud-cover">Max Cloud Cover:</label>
+                            <input type="range" id="change-cloud-cover" min="0" max="100" value="30" class="slider">
+                            <span id="change-cloud-cover-value">30%</span>
+                        </div>
+                        <div class="param-row">
+                            <label for="change-aoi-coverage">Min AOI Coverage:</label>
+                            <input type="range" id="change-aoi-coverage" min="0" max="100" value="0" class="slider">
+                            <span id="change-aoi-coverage-value">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Spectral Analysis Method Selection -->
+                <div class="control-group">
+                    <label for="spectral-method">Spectral Analysis Method:</label>
+                    <select id="spectral-method" class="form-select">
+                        <option value="ndvi">NDVI (Normalized Difference Vegetation Index)</option>
+                        <option value="ndmi">NDMI (Normalized Difference Moisture Index)</option>
+                        <option value="mvi">MVI (Mangrove Vegetation Index)</option>
+                    </select>
+                </div>
+
+                <!-- Search Button -->
+                <div class="control-group">
+                    <button id="search-change-images-btn" class="control-btn primary large" disabled>
+                        🔍 Search Available Images
+                    </button>
+                </div>
+
+                <!-- Calendar Results (hidden until search) -->
+                <div id="change-calendar-results" class="change-calendar-results hidden">
+                    <h3>📅 Available Images</h3>
+                    <div class="results-info-row">
+                        <p class="results-info">
+                            <span id="change-selected-count">0</span> images selected.
+                        </p>
+                        <button id="select-all-dates-btn" class="control-btn secondary small">
+                            ✓ Select All
+                        </button>
+                    </div>
+
+                    <!-- Calendar Grid -->
+                    <div id="change-calendar-grid" class="change-calendar-grid">
+                        <!-- Calendar will be populated here -->
+                    </div>
+
+                    <!-- Run Analysis Button -->
+                    <div class="control-group">
+                        <button id="run-change-analysis-btn" class="control-btn primary large" disabled>
+                            📊 Run Time Series Analysis
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Analysis Results (hidden until analysis complete) -->
+                <div id="change-analysis-results" class="change-analysis-results hidden">
+                    <div class="analysis-header">
+                        <h3>📈 Time Series Analysis</h3>
+                        <button id="download-csv-btn" class="control-btn secondary">
+                            📥 Download CSV
+                        </button>
+                    </div>
+                    <div id="change-chart-container">
+                        <canvas id="change-time-series-chart"></canvas>
+                    </div>
+                    
+                    <!-- Analyzed Images List -->
+                    <div class="analyzed-images-section">
+                        <h4>🗓️ Analyzed Images</h4>
+                        <div id="analyzed-images-list" class="analyzed-images-list">
+                            <!-- Analyzed images will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Results Panel -->
+    <div id="results-panel" class="panel hidden">
+        <div class="panel-header">
+            <h3>🛰️ Search Results</h3>
+            <button id="close-results" class="close-btn">✕</button>
+        </div>
+        <div class="panel-content">
+            <div id="results-count" class="results-count"></div>
+            <div id="search-results" class="search-results">
+                <!-- Results will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Processing Panel -->
+    <div id="processing-panel" class="panel hidden" style="display: none;">
+        <div class="panel-header">
+            <h3>⚙️ Image Processing</h3>
+            <button id="close-processing" class="close-btn">✕</button>
+        </div>
+        <div class="panel-content">
+            <div class="selected-image-info">
+                <div id="selected-image-details"></div>
+            </div>
+            <div class="processing-controls">
+                <button id="process-image" class="control-btn primary large" disabled>
+                    🔄 Process Selected Image
+                </button>
+            </div>
+            <div id="processing-results" class="processing-results">
+                <!-- Processing results will appear here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Analysis Panel (now hidden as it's integrated into control panel) -->
+    <div id="analysis-panel" class="panel hidden" style="display: none;">
+        <div class="analysis-header">
+            <h3>📊 Multi-Model Analysis Results</h3>
+            <button id="close-analysis" class="close-btn">✕</button>
+        </div>
+        <div class="analysis-content">
+            <div id="analysis-grid" class="analysis-grid">
+                <!-- Analysis results will be populated here -->
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <h3>Processing...</h3>
+            <p id="loading-message">Please wait while we process your request</p>
+            <div class="progress">
+                <div id="loading-progress-bar" class="progress-bar"></div>
+            </div>
+            <div id="loading-progress-text" class="progress-text">0%</div>
+        </div>
+    </div>
+
+
+
+    <!-- JavaScript Libraries -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin=""></script>
+    <!-- Dependencies for GeoRaster -->
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/proj4leaflet@1.0.2/src/proj4leaflet.js"></script>
+    <!-- GeoRaster for rendering COG directly (browser UMD with globals) -->
+    <script src="https://cdn.jsdelivr.net/npm/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/georaster-layer-for-leaflet/dist/georaster-layer-for-leaflet.min.js"></script>
+    <!-- shpjs for Shapefile parsing -->
+    <script src="https://unpkg.com/shpjs@latest/dist/shp.js"></script>
+    <!-- toGeoJSON for KML parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.min.js"></script>
+    <!-- Leaflet Side-by-Side for image comparison (inline to avoid CDN issues) -->
+    <script>
+    (function(){
+        L.Control.SideBySide = L.Control.extend({
+            options: { thumbSize: 42, padding: 0 },
+            initialize: function(leftLayers, rightLayers, options) {
+                this.setLeftLayers(leftLayers);
+                this.setRightLayers(rightLayers);
+                L.setOptions(this, options);
+            },
+            getPosition: function() {
+                var rangeValue = this._range.value;
+                var offset = (0.5 - rangeValue) * (2 * this.options.padding + this.options.thumbSize);
+                return this._map.getSize().x * rangeValue + offset;
+            },
+            setPosition: function() {},
+            includes: L.Evented.prototype,
+            addTo: function(map) {
+                this.remove();
+                this._map = map;
+                var container = this._container = L.DomUtil.create('div', 'leaflet-sbs', map._controlContainer);
+                this._divider = L.DomUtil.create('div', 'leaflet-sbs-divider', container);
+                var range = this._range = L.DomUtil.create('input', 'leaflet-sbs-range', container);
+                range.type = 'range';
+                range.min = 0;
+                range.max = 1;
+                range.step = 'any';
+                range.value = 0.5;
+                range.style.paddingLeft = range.style.paddingRight = this.options.padding + 'px';
+                this._addEvents();
+                this._updateLayers();
+                return this;
+            },
+            remove: function() {
+                if (!this._map) return this;
+                if (this._leftLayer) this._leftLayer.getContainer().style.clip = '';
+                if (this._rightLayer) this._rightLayer.getContainer().style.clip = '';
+                this._removeEvents();
+                L.DomUtil.remove(this._container);
+                this._map = null;
+                return this;
+            },
+            setLeftLayers: function(leftLayers) {
+                this._leftLayers = Array.isArray(leftLayers) ? leftLayers : [leftLayers];
+                this._updateLayers();
+                return this;
+            },
+            setRightLayers: function(rightLayers) {
+                this._rightLayers = Array.isArray(rightLayers) ? rightLayers : [rightLayers];
+                this._updateLayers();
+                return this;
+            },
+            _updateClip: function() {
+                var map = this._map;
+                var nw = map.containerPointToLayerPoint([0, 0]);
+                var se = map.containerPointToLayerPoint(map.getSize());
+                var clipX = nw.x + this.getPosition();
+                var dividerX = this.getPosition();
+                this._divider.style.left = dividerX + 'px';
+                this.fire('dividermove', { x: dividerX });
+                var clipLeft = 'rect(' + [nw.y, clipX, se.y, nw.x].join('px,') + 'px)';
+                var clipRight = 'rect(' + [nw.y, se.x, se.y, clipX].join('px,') + 'px)';
+                if (this._leftLayer) this._leftLayer.getContainer().style.clip = clipLeft;
+                if (this._rightLayer) this._rightLayer.getContainer().style.clip = clipRight;
+            },
+            _updateLayers: function() {
+                if (!this._map) return this;
+                var dominated = this._map._dominant;
+                var prevLeft = this._leftLayer;
+                var prevRight = this._rightLayer;
+                this._leftLayer = this._rightLayer = null;
+                this._leftLayers.forEach(function(layer) {
+                    if (this._map.hasLayer(layer)) this._leftLayer = layer;
+                }, this);
+                this._rightLayers.forEach(function(layer) {
+                    if (this._map.hasLayer(layer)) this._rightLayer = layer;
+                }, this);
+                if (prevLeft !== this._leftLayer) prevLeft && (prevLeft.getContainer().style.clip = '');
+                if (prevRight !== this._rightLayer) prevRight && (prevRight.getContainer().style.clip = '');
+                this._updateClip();
+                return this;
+            },
+            _addEvents: function() {
+                var range = this._range;
+                var map = this._map;
+                if (!map || !range) return;
+                map.on('move', this._updateClip, this);
+                map.on('layeradd layerremove', this._updateLayers, this);
+                L.DomEvent.on(range, 'input', this._updateClip, this);
+                L.DomEvent.on(range, 'mousedown touchstart', function() { map.dragging.disable(); }, this);
+                L.DomEvent.on(range, 'mouseup touchend', function() { map.dragging.enable(); }, this);
+            },
+            _removeEvents: function() {
+                var range = this._range;
+                var map = this._map;
+                if (range) {
+                    L.DomEvent.off(range, 'input', this._updateClip, this);
+                    L.DomEvent.off(range, 'mousedown touchstart');
+                    L.DomEvent.off(range, 'mouseup touchend');
+                }
+                if (map) {
+                    map.off('move', this._updateClip, this);
+                    map.off('layeradd layerremove', this._updateLayers, this);
+                }
+            }
+        });
+        L.control.sideBySide = function(leftLayers, rightLayers, options) {
+            return new L.Control.SideBySide(leftLayers, rightLayers, options);
+        };
+    })();
+    </script>
+
+    <!-- Custom JavaScript Modules -->
+    <script src="/static/js/api-client.js"></script>
+    <script src="/static/js/ui-components.js"></script>
+    <script src="/static/js/image-search.js"></script>
+    <script src="/static/js/analysis-controller.js"></script>
+    <script src="/static/js/change-monitoring.js"></script>
+    <script src="/static/js/custom-visualization.js"></script>
+    <script src="/static/js/threshold-controller.js"></script>
+    <script src="/static/js/target-detection.js"></script>
+    <script src="/static/map.js"></script>
+    <script src="/static/script.js"></script>
+
+    <script>
+        // Initialize the application with proper order
+        document.addEventListener('DOMContentLoaded', function () {
+            console.log('🚀 Mangrove Detection Platform Initializing...');
+
+            // Wait for all external scripts to load completely
+            setTimeout(() => {
+                try {
+                    // Step 1: Initialize Map Manager first
+                    console.log('📍 Step 1: Initializing Map Manager...');
+                    window.mapManager = new MapManager('map');
+
+                    // Step 2: Wait for map to be ready, then initialize Platform Controller
+                    setTimeout(() => {
+                        console.log('⚙️ Step 2: Initializing Platform Controller...');
+                        window.platform = new PlatformController();
+                        window.platformController = window.platform; // For button onclick compatibility
+
+                        // Make platform available for modal callbacks
+                        window.appInstance = window.platform;
+
+                        // Debug functions for testing
+                        window.testProgressBar = () => {
+                            console.log('[DEBUG] Testing progress bar...');
+                            window.platform.showLoading('Testing Progress...');
+                            let progress = 0;
+                            const interval = setInterval(() => {
+                                progress += 10;
+                                window.platform.updateLoadingProgress(progress, `Testing ${progress}%`);
+                                if (progress >= 100) {
+                                    clearInterval(interval);
+                                    setTimeout(() => window.platform.hideLoading(), 1000);
+                                }
+                            }, 500);
+                        };
+
+                        console.log('✅ Platform Ready!');
+                        console.log('💡 Debug: window.testProgressBar() - Test progress manually');
+                    }, 500); // Additional delay for map setup
+
+                } catch (error) {
+                    console.error('❌ Initialization Error:', error);
+
+                    // Show error message to user
+                    const notification = document.getElementById('notification');
+                    if (notification) {
+                        notification.textContent = 'Initialization failed. Please refresh the page.';
+                        notification.className = 'notification error show';
+                    }
+                }
+            }, 500); // Increased delay to ensure all scripts are loaded
+        });
+    </script>
+</body>
+
+</html>
