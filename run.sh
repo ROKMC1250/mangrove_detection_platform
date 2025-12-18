@@ -12,15 +12,39 @@ fi
 source venv/bin/activate
 
 export PYTHONUNBUFFERED=1
-    export EE_SERVICE_ACCOUNT="$(jq -r .client_email /home/hjh1037/Mangrove_segmentation/mangrove_platform/new_platform/backend/ee-service-account-key.json)"
-    export EE_SERVICE_ACCOUNT_KEY="/home/hjh1037/Mangrove_segmentation/mangrove_platform/new_platform/backend/ee-service-account-key.json"
-    export GOOGLE_APPLICATION_CREDENTIALS="$EE_SERVICE_ACCOUNT_KEY"
-    export GCS_BUCKET="mangrove-gee-exports-2025"
-    export GCS_BUCKET_REGION="asia-northeast3"
-	export MODEL1_LOG_DIR=/home/hjh1037/Mangrove_segmentation/logs/segformer_mit_b2_v1
-	export MODEL_ROOT=/home/hjh1037/Mangrove_segmentation
 
-cd /home/hjh1037/Mangrove_segmentation/mangrove_platform/new_platform
+# Set project root (adjust if needed)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT"
+
+# Set Earth Engine credentials (adjust paths if needed)
+if [ -z "${EE_SERVICE_ACCOUNT_KEY:-}" ]; then
+    export EE_SERVICE_ACCOUNT_KEY="$PROJECT_ROOT/backend/ee-service-account-key.json"
+fi
+
+if [ -z "${EE_SERVICE_ACCOUNT:-}" ] && [ -f "$EE_SERVICE_ACCOUNT_KEY" ]; then
+    if command -v jq &> /dev/null; then
+        export EE_SERVICE_ACCOUNT="$(jq -r .client_email "$EE_SERVICE_ACCOUNT_KEY")"
+    fi
+fi
+
+if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="$EE_SERVICE_ACCOUNT_KEY"
+fi
+
+# Set GCS bucket (can be overridden by environment variables)
+if [ -z "${GCS_BUCKET:-}" ]; then
+    export GCS_BUCKET="mangrove-gee-exports-2025"
+fi
+
+if [ -z "${GCS_BUCKET_REGION:-}" ]; then
+    export GCS_BUCKET_REGION="asia-northeast3"
+fi
+
+# Model paths - set these environment variables if you have models
+# If not set, the segmentation model will be disabled but other features will work
+# export MODEL1_LOG_DIR=/path/to/your/model/logs
+# export MODEL_ROOT=/path/to/your/model/root
 
 python -m pip install -r backend/requirements.txt
 

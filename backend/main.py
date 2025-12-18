@@ -159,10 +159,17 @@ async def root():
 @app.on_event("startup")
 async def on_startup():
     """Initialize components on startup."""
+    print("🚀 Starting Mangrove Platform Backend...")
     try:
-        init_model1()
+        model_loaded = init_model1()
+        if model_loaded:
+            print("✅ Segmentation model loaded successfully")
+        else:
+            print("⚠️  Segmentation model not available - continuing without it")
+            print("   Other analysis features (NDVI, NDMI, MVI, etc.) are still available")
     except Exception as e:
-        print(f"STARTUP - Model initialization error: {e}")
+        print(f"⚠️  STARTUP - Model initialization error: {e}")
+        print("   Continuing without segmentation model - other features are still available")
 
 
 # ===== Health Check =====

@@ -28,3 +28,13 @@ venv/
 env/
 ENV/
 .venv/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.bat.bak
+*.swp
+*.swo
+*~

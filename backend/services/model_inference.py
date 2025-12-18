@@ -73,20 +73,24 @@ def init_model1() -> bool:
             return True
         
         if not TORCH_AVAILABLE:
-            _MODEL1_ERROR = "PyTorch not available"
-            print(f"MODEL1 - {_MODEL1_ERROR}")
+            _MODEL1_ERROR = "PyTorch not available - segmentation model will be disabled"
+            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
+            print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
         
         log_dir = MODEL1_LOG_DIR
         if not log_dir:
-            _MODEL1_ERROR = "MODEL1_LOG_DIR environment variable not set"
-            print(f"MODEL1 - {_MODEL1_ERROR}")
+            _MODEL1_ERROR = "MODEL1_LOG_DIR environment variable not set - segmentation model will be disabled"
+            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
+            print("   Note: Set MODEL1_LOG_DIR environment variable to enable segmentation model.")
+            print("   Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
         
         cfg_path = os.path.join(log_dir, 'config.yaml')
         if not os.path.exists(cfg_path):
-            _MODEL1_ERROR = f"Config file not found at {cfg_path}"
-            print(f"MODEL1 - {_MODEL1_ERROR}")
+            _MODEL1_ERROR = f"Config file not found at {cfg_path} - segmentation model will be disabled"
+            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
+            print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
         
         try:
@@ -111,8 +115,9 @@ def init_model1() -> bool:
             
             ckpt = os.path.join(log_dir, 'weights', 'last.pt')
             if not os.path.exists(ckpt):
-                _MODEL1_ERROR = f"Checkpoint not found at {ckpt}"
-                print(f"MODEL1 - {_MODEL1_ERROR}")
+                _MODEL1_ERROR = f"Checkpoint not found at {ckpt} - segmentation model will be disabled"
+                print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
+                print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
                 return False
             
             state = torch.load(ckpt, map_location=device)
@@ -130,8 +135,11 @@ def init_model1() -> bool:
             return True
             
         except Exception as e:
-            _MODEL1_ERROR = str(e)
-            print(f"MODEL1 - load error: {e}")
+            _MODEL1_ERROR = f"{str(e)} - segmentation model will be disabled"
+            print(f"⚠️  MODEL1 - load error: {e}")
+            print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
+            import traceback
+            traceback.print_exc()
             return False
 
 
