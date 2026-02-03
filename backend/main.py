@@ -11,7 +11,7 @@ This is the modular version of the backend that organizes code into:
 import os
 import mimetypes
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -103,7 +103,7 @@ async def get_progress(job_id: str):
         return {
             "job_id": job_id,
             "percent": 0,
-            "message": "Job not found or pending",
+            "message": "Extracting analysis results...",
             "status": "pending",
             "current_phase": None,
             "estimated_remaining_seconds": None,
@@ -114,8 +114,8 @@ async def get_progress(job_id: str):
 
 
 @app.get("/api/proxy-file")
-async def proxy_file(path: str):
-    """Stream a local file to the client to avoid browser file:// restrictions."""
+async def proxy_file(path: str, request: Request):
+    """Stream a local file to the client with Range Request support for COG files."""
     try:
         if path.startswith("file://"):
             path = path[7:]
@@ -127,9 +127,48 @@ async def proxy_file(path: str):
         if not os.path.exists(abs_path):
             raise HTTPException(status_code=404, detail="File not found")
 
+        file_size = os.path.getsize(abs_path)
         mime, _ = mimetypes.guess_type(abs_path)
         media_type = mime or "application/octet-stream"
 
+        # Handle Range requests for COG support
+        range_header = request.headers.get("range")
+        if range_header:
+            # Parse range header: "bytes=start-end"
+            range_match = range_header.replace("bytes=", "").split("-")
+            start = int(range_match[0]) if range_match[0] else 0
+            end = int(range_match[1]) if range_match[1] else file_size - 1
+            
+            # Ensure valid range
+            start = max(0, min(start, file_size - 1))
+            end = max(start, min(end, file_size - 1))
+            content_length = end - start + 1
+            
+            def iterfile_range():
+                with open(abs_path, "rb") as f:
+                    f.seek(start)
+                    remaining = content_length
+                    while remaining > 0:
+                        chunk_size = min(1024 * 1024, remaining)
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        yield chunk
+
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(content_length),
+            }
+            return StreamingResponse(
+                iterfile_range(),
+                status_code=206,
+                media_type=media_type,
+                headers=headers
+            )
+
+        # No range request - return full file
         def iterfile():
             with open(abs_path, "rb") as f:
                 while True:
@@ -138,7 +177,11 @@ async def proxy_file(path: str):
                         break
                     yield chunk
 
-        return StreamingResponse(iterfile(), media_type=media_type)
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+        }
+        return StreamingResponse(iterfile(), media_type=media_type, headers=headers)
     except HTTPException:
         raise
     except Exception as e:

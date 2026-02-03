@@ -1,5 +1,6 @@
 """
 Model inference module for deep learning segmentation.
+Optimized for Segformer model with Gaussian-weighted blending.
 """
 
 import os
@@ -13,10 +14,14 @@ import io as pyio
 
 from ..core.config import (
     MODEL_ROOT,
+    MODEL_DIR,
     MODEL1_LOG_DIR,
     MODEL1_GPUS,
     MODEL1_PATCH_SIZE,
     MODEL1_OVERLAP,
+    MODEL1_USE_TTA,
+    MODEL_CHECKPOINT,
+    DEFAULT_MODEL_PARAMS,
     PROJECT_ROOT,
 )
 from ..utils.cache import cache_index_data
@@ -42,6 +47,23 @@ _MODEL1_READY = False
 _MODEL1_ERROR = None
 _MODEL1_LOCK = threading.Lock()
 
+# ===== Segmentation Model Default Configuration =====
+# Default model parameters loaded from model_config.yaml (via config.py)
+# Modify backend/model_config.yaml to change these settings
+def _get_default_model_config():
+    """Build default model config from model_config.yaml settings."""
+    return {
+        'model': {
+            'name': DEFAULT_MODEL_PARAMS.get('name', 'Segformer'),
+            'args': {
+                'encoder_name': DEFAULT_MODEL_PARAMS.get('encoder_name', 'mit_b2'),
+                'in_channels': DEFAULT_MODEL_PARAMS.get('in_channels', 13),
+                'classes': DEFAULT_MODEL_PARAMS.get('classes', 1),
+                'encoder_weights': DEFAULT_MODEL_PARAMS.get('encoder_weights', None)
+            }
+        }
+    }
+
 
 def _get_device_from_env(gpus_str: str):
     """Get the appropriate device based on environment settings."""
@@ -57,8 +79,42 @@ def _get_device_from_env(gpus_str: str):
     return torch.device('cpu')
 
 
+def _create_gaussian_window(size: int, sigma_ratio: float = 0.25) -> np.ndarray:
+    """
+    Create a 2D Gaussian window for smooth patch blending.
+    
+    This eliminates visible seams at patch boundaries by giving higher weight
+    to the center of each patch and lower weight to edges.
+    
+    Args:
+        size: Window size (assumes square)
+        sigma_ratio: Ratio of sigma to size (smaller = more peaked center)
+        
+    Returns:
+        2D Gaussian weight array normalized to [0, 1]
+    """
+    sigma = size * sigma_ratio
+    
+    # Create 1D Gaussian
+    x = np.arange(size) - (size - 1) / 2
+    gauss_1d = np.exp(-x**2 / (2 * sigma**2))
+    
+    # Create 2D Gaussian via outer product
+    gauss_2d = np.outer(gauss_1d, gauss_1d)
+    
+    # Normalize to [0, 1] with minimum value to avoid zero weights at edges
+    gauss_2d = gauss_2d / gauss_2d.max()
+    gauss_2d = np.clip(gauss_2d, 0.1, 1.0)
+    
+    return gauss_2d.astype(np.float32)
+
+
 def init_model1() -> bool:
-    """Initialize Model1 (segmentation model) for inference.
+    """Initialize segmentation model for mangrove inference.
+    
+    Model path priority:
+    1. MODEL_DIR environment variable (recommended)
+    2. MODEL1_LOG_DIR environment variable (legacy)
     
     Returns:
         True if model loaded successfully, False otherwise
@@ -74,53 +130,69 @@ def init_model1() -> bool:
         
         if not TORCH_AVAILABLE:
             _MODEL1_ERROR = "PyTorch not available - segmentation model will be disabled"
-            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
+            print(f"⚠️  MODEL - {_MODEL1_ERROR}")
             print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
         
-        log_dir = MODEL1_LOG_DIR
+        # Determine model directory (MODEL_DIR takes priority, then MODEL1_LOG_DIR)
+        log_dir = MODEL_DIR if MODEL_DIR else MODEL1_LOG_DIR
         if not log_dir:
-            _MODEL1_ERROR = "MODEL1_LOG_DIR environment variable not set - segmentation model will be disabled"
-            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
-            print("   Note: Set MODEL1_LOG_DIR environment variable to enable segmentation model.")
+            _MODEL1_ERROR = "No model directory configured - set MODEL_DIR environment variable"
+            print(f"⚠️  MODEL - {_MODEL1_ERROR}")
             print("   Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
         
+        # Load config or use default config from model_config.yaml
         cfg_path = os.path.join(log_dir, 'config.yaml')
-        if not os.path.exists(cfg_path):
-            _MODEL1_ERROR = f"Config file not found at {cfg_path} - segmentation model will be disabled"
-            print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
-            print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
-            return False
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, 'r') as f:
+                    cfg = yaml.safe_load(f)
+                print(f"MODEL - loaded config from {cfg_path}")
+            except Exception as e:
+                print(f"⚠️  MODEL - config load error, using defaults from model_config.yaml: {e}")
+                cfg = _get_default_model_config()
+        else:
+            print(f"MODEL - config.yaml not found in {log_dir}, using model_config.yaml defaults")
+            cfg = _get_default_model_config()
         
         try:
-            with open(cfg_path, 'r') as f:
-                cfg = yaml.safe_load(f)
-            
-            encoder_weights = cfg['model']['args'].get('encoder_weights', None)
-            in_ch = int(cfg['model']['args'].get('in_channels', 3))
-            out_classes = int(cfg['model']['args'].get('classes', 1))
-            encoder_name = cfg['model']['args'].get('encoder_name', 'resnet34')
+            # Extract model parameters
+            model_name = cfg['model']['name']
+            model_args = cfg['model']['args']
+            encoder_name = model_args.get('encoder_name', 'mit_b2')
+            in_channels = int(model_args.get('in_channels', 13))
+            out_classes = int(model_args.get('classes', 1))
+            encoder_weights = model_args.get('encoder_weights', None)
             
             device = _get_device_from_env(MODEL1_GPUS)
-            model_name = cfg['model']['name']
+            
+            print(f"MODEL - Creating model: {model_name}")
+            print(f"  encoder: {encoder_name}, in_channels: {in_channels}, classes: {out_classes}")
             
             model = create_model(
                 model_name=model_name, 
-                encoder_weights=encoder_weights, 
-                in_channels=in_ch, 
+                encoder_name=encoder_name,
+                in_channels=in_channels, 
                 classes=out_classes, 
-                encoder_name=encoder_name
+                encoder_weights=encoder_weights
             )
             
-            ckpt = os.path.join(log_dir, 'weights', 'last.pt')
+            # Load checkpoint
+            ckpt = os.path.join(log_dir, 'weights', MODEL_CHECKPOINT)
             if not os.path.exists(ckpt):
-                _MODEL1_ERROR = f"Checkpoint not found at {ckpt} - segmentation model will be disabled"
-                print(f"⚠️  MODEL1 - {_MODEL1_ERROR}")
-                print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
-                return False
+                # Try alternative path without 'weights' subdirectory
+                ckpt_alt = os.path.join(log_dir, MODEL_CHECKPOINT)
+                if os.path.exists(ckpt_alt):
+                    ckpt = ckpt_alt
+                else:
+                    _MODEL1_ERROR = f"Checkpoint not found at {ckpt} - segmentation model will be disabled"
+                    print(f"⚠️  MODEL - {_MODEL1_ERROR}")
+                    print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
+                    return False
             
-            state = torch.load(ckpt, map_location=device)
+            print(f"MODEL - Loading checkpoint: {ckpt}")
+            state = torch.load(ckpt, map_location=device, weights_only=False)
             model.load_state_dict(state['model'] if isinstance(state, dict) and 'model' in state else state)
             model.to(device)
             model.eval()
@@ -131,12 +203,12 @@ def init_model1() -> bool:
             _MODEL1_READY = True
             _MODEL1_ERROR = None
             
-            print(f"MODEL1 - loaded successfully on {device}")
+            print(f"✅ MODEL - {model_name} loaded successfully on {device}")
             return True
             
         except Exception as e:
             _MODEL1_ERROR = f"{str(e)} - segmentation model will be disabled"
-            print(f"⚠️  MODEL1 - load error: {e}")
+            print(f"⚠️  MODEL - load error: {e}")
             print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
             import traceback
             traceback.print_exc()
@@ -158,8 +230,13 @@ def get_model1_status() -> Dict:
 
 
 def _predict_large_image_mask(model, image_path: str, patch_size: int, 
-                               overlap: float, device) -> Tuple[np.ndarray, dict]:
-    """Run inference on a large image using sliding window.
+                               overlap: float, device, 
+                               expected_channels: int = 13,
+                               use_tta: bool = False) -> Tuple[np.ndarray, dict]:
+    """Run inference on a large image using sliding window with Gaussian blending.
+    
+    Uses Gaussian weighted averaging for smooth transitions between patches,
+    which eliminates visible seams at patch boundaries.
     
     Args:
         model: PyTorch model
@@ -167,26 +244,49 @@ def _predict_large_image_mask(model, image_path: str, patch_size: int,
         patch_size: Size of patches for inference
         overlap: Overlap ratio between patches
         device: PyTorch device
+        expected_channels: Number of channels the model expects (default: 13 for Segformer)
+        use_tta: Use Test Time Augmentation (flip averaging) for better results
         
     Returns:
         Tuple of (mask array, rasterio profile)
     """
     with rasterio.open(image_path) as src:
-        image = src.read(indexes=[1, 2, 3, 4, 5, 6])  # (C, H, W)
+        # Read all available bands
+        n_bands = src.count
+        image = src.read()  # (C, H, W)
         profile = src.profile
     
     _, height, width = image.shape
+    
+    # Handle channel mismatch - pad with zeros if needed, or truncate
+    if n_bands < expected_channels:
+        padding = np.zeros((expected_channels - n_bands, height, width), dtype=image.dtype)
+        image = np.concatenate([image, padding], axis=0)
+        print(f"  Padded image from {n_bands} to {expected_channels} channels")
+    elif n_bands > expected_channels:
+        image = image[:expected_channels]
+        print(f"  Using first {expected_channels} of {n_bands} available channels")
+    
+    # Normalize for Sentinel-2 (values typically 0-10000)
     img = image.astype(np.float32) / 10000.0
     
     stride = max(1, int(patch_size * (1.0 - overlap)))
+    
+    # Calculate necessary padding
     pad_h = (stride - (height - patch_size) % stride) % stride
     pad_w = (stride - (width - patch_size) % stride) % stride
-    padded = np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode='constant')
     
+    # Use reflect padding for better edge handling
+    padded = np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode='reflect')
     ph, pw = padded.shape[1], padded.shape[2]
     
+    # Create Gaussian weight window for smooth blending
+    weight_window = _create_gaussian_window(patch_size, sigma_ratio=0.3)
+    weight_tensor = torch.from_numpy(weight_window).to(device).unsqueeze(0).unsqueeze(0)
+    
+    # Create placeholders for weighted averaging
     pred_map = torch.zeros((1, 1, ph, pw), device=device, dtype=torch.float32)
-    cnt_map = torch.zeros((1, 1, ph, pw), device=device, dtype=torch.float32)
+    weight_map = torch.zeros((1, 1, ph, pw), device=device, dtype=torch.float32)
     
     model.eval()
     with torch.no_grad():
@@ -194,27 +294,64 @@ def _predict_large_image_mask(model, image_path: str, patch_size: int,
             for x in range(0, pw - patch_size + 1, stride):
                 patch = padded[:, y:y+patch_size, x:x+patch_size]
                 patch_tensor = torch.from_numpy(patch).float().to(device).unsqueeze(0)
+                
+                # Basic prediction
                 out = model(patch_tensor)
-                prob = torch.sigmoid(out)
-                pred_map[:, :, y:y+patch_size, x:x+patch_size] += prob
-                cnt_map[:, :, y:y+patch_size, x:x+patch_size] += 1
+                prediction = torch.sigmoid(out)
+                
+                # Optional: Test Time Augmentation (horizontal + vertical flip)
+                if use_tta:
+                    # Horizontal flip
+                    patch_hflip = torch.flip(patch_tensor, dims=[3])
+                    pred_hflip = torch.sigmoid(model(patch_hflip))
+                    pred_hflip = torch.flip(pred_hflip, dims=[3])
+                    
+                    # Vertical flip
+                    patch_vflip = torch.flip(patch_tensor, dims=[2])
+                    pred_vflip = torch.sigmoid(model(patch_vflip))
+                    pred_vflip = torch.flip(pred_vflip, dims=[2])
+                    
+                    # Both flips
+                    patch_hvflip = torch.flip(patch_tensor, dims=[2, 3])
+                    pred_hvflip = torch.sigmoid(model(patch_hvflip))
+                    pred_hvflip = torch.flip(pred_hvflip, dims=[2, 3])
+                    
+                    # Average all predictions
+                    prediction = (prediction + pred_hflip + pred_vflip + pred_hvflip) / 4.0
+                
+                # Apply Gaussian weight to prediction
+                weighted_pred = prediction * weight_tensor
+                
+                # Accumulate weighted predictions and weights
+                pred_map[:, :, y:y+patch_size, x:x+patch_size] += weighted_pred
+                weight_map[:, :, y:y+patch_size, x:x+patch_size] += weight_tensor
     
-    avg = pred_map / (cnt_map + 1e-6)
+    # Weighted average
+    avg = pred_map / (weight_map + 1e-6)
+    
+    # Crop back to original size
     final = avg[:, :, :height, :width]
     mask = (final > 0.5).squeeze().detach().cpu().numpy().astype(np.uint8)
+    
+    # Debug: log prediction statistics
+    prob_np = final.squeeze().detach().cpu().numpy()
+    print(f"MODEL - Prediction stats: min={prob_np.min():.4f}, max={prob_np.max():.4f}, mean={prob_np.mean():.4f}")
+    print(f"MODEL - Mask stats: total={mask.size}, positive={mask.sum()}, ratio={100*mask.sum()/mask.size:.2f}%")
     
     return mask, profile
 
 
 def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
-                          geometry: Optional[Dict] = None) -> Tuple[Optional[bytes], Optional[str], Optional[Dict]]:
-    """Run Model1 segmentation inference on an image.
+                          geometry: Optional[Dict] = None,
+                          use_tta: Optional[bool] = None) -> Tuple[Optional[bytes], Optional[str], Optional[Dict]]:
+    """Run segmentation model inference on an image.
     
     Args:
         image_path: Path to input raster file
         bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
         image_id: Image identifier for caching
         geometry: Optional GeoJSON geometry for masking
+        use_tta: Use Test Time Augmentation for better results (slower)
         
     Returns:
         Tuple of (preview_bytes, overlay_path, overlay_meta) or (None, None, None) on failure
@@ -231,18 +368,32 @@ def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
             return None, None, None
     
     if not _MODEL1_READY or _MODEL1 is None or _MODEL1_DEVICE is None:
-        print(f"MODEL1 - not ready: {_MODEL1_ERROR}")
+        print(f"MODEL - not ready: {_MODEL1_ERROR}")
         return None, None, None
     
     try:
-        # Run prediction
+        # Get expected channels from config
+        expected_channels = 13  # Default
+        if _MODEL1_CFG:
+            expected_channels = int(_MODEL1_CFG['model']['args'].get('in_channels', 13))
+        
+        # Use config default for TTA if not explicitly specified
+        actual_use_tta = use_tta if use_tta is not None else MODEL1_USE_TTA
+        
+        print(f"MODEL - Running inference on {image_path}")
+        print(f"  patch_size={MODEL1_PATCH_SIZE}, overlap={MODEL1_OVERLAP}, channels={expected_channels}, TTA={actual_use_tta}")
+        
+        # Run prediction with Gaussian blending
         mask, profile = _predict_large_image_mask(
-            _MODEL1, image_path, MODEL1_PATCH_SIZE, MODEL1_OVERLAP, _MODEL1_DEVICE
+            _MODEL1, image_path, MODEL1_PATCH_SIZE, MODEL1_OVERLAP, _MODEL1_DEVICE,
+            expected_channels=expected_channels, use_tta=actual_use_tta
         )
         
-        # Read RGB bands for preview
+        # Read RGB bands for preview (B4=Red, B3=Green, B2=Blue)
+        # New band order: B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12
+        # So B4=band4, B3=band3, B2=band2
         with rasterio.open(image_path) as src:
-            b4, b3, b2 = src.read(1), src.read(2), src.read(3)
+            b4, b3, b2 = src.read(4), src.read(3), src.read(2)  # Red, Green, Blue
             src_transform = src.transform
             src_crs = src.crs
         
@@ -282,8 +433,14 @@ def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
         
         # Save overlay
         overlay_png_path = generate_overlay_path("model1_overlay")
-        is_mangrove = (aoi_rgb[:, :, 0] == 255)
+        # Note: aoi_mask is already the reprojected mangrove mask from warp_rgb_and_mask_to_aoi
+        # Using >= 128 instead of == 255 because bilinear resampling can change exact values
+        is_mangrove = (aoi_rgb[:, :, 0] >= 128)
         final_mask = is_mangrove & aoi_mask
+        
+        # Log mask statistics for debugging
+        print(f"MODEL - Mask stats: total={final_mask.size}, mangrove={final_mask.sum()}, ratio={100*final_mask.sum()/final_mask.size:.2f}%")
+        
         save_rgba_overlay_png_with_transparency(aoi_rgb, final_mask, overlay_png_path)
         
         overlay_meta = {
@@ -295,7 +452,7 @@ def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
         return preview, overlay_png_path, overlay_meta
         
     except Exception as e:
-        print(f"MODEL1 - inference error: {e}")
+        print(f"MODEL - inference error: {e}")
         import traceback
         traceback.print_exc()
         return None, None, None

@@ -309,10 +309,21 @@ def get_pixel_value(req: PixelValueRequest):
     try:
         print(f"Getting pixel value for {req.image_id} at ({req.lat}, {req.lng}) for {req.model_id}")
         
+        # model1 is segmentation - no continuous pixel value
+        if req.model_id == 'model1':
+            return {"value": "Segmentation model - categorical output"}
+        
         cache_key = None
         
-        if req.model_id in ['model1', 'model2', 'model3', 'model4']:
+        # For spectral indices (model2=NDVI, model3=NDMI, model4=MVI)
+        if req.model_id in ['model2', 'model3', 'model4']:
             cache_key = find_matching_index_cache_key(req.image_id, req.model_id)
+            
+            # Debug: log available cache keys
+            with INDEX_CACHE_LOCK:
+                available_keys = list(INDEX_DATA_CACHE.keys())
+                print(f"PIXEL VALUE - Looking for {req.model_id}, available keys: {available_keys}")
+            
         elif req.model_id.startswith('custom-result-'):
             cache_key = req.model_id
         
@@ -321,6 +332,9 @@ def get_pixel_value(req: PixelValueRequest):
             if value is not None:
                 print(f"PIXEL VALUE - Retrieved: {value}")
                 return {"value": round(value, 4)}
+            else:
+                # Value might be None if coordinates are outside the image bounds
+                return {"value": "Outside image bounds"}
         
         if req.model_id.startswith('custom-result-'):
             custom_info = get_custom_viz_cache(req.model_id)
@@ -330,7 +344,10 @@ def get_pixel_value(req: PixelValueRequest):
                 elif custom_info['type'] == 'script':
                     return {"value": "Custom script - no single value"}
         
-        return {"error": f"No cached data available for {req.model_id}. Please process the image first."}
+        # More helpful error message
+        model_names = {'model2': 'NDVI', 'model3': 'NDMI', 'model4': 'MVI'}
+        model_name = model_names.get(req.model_id, req.model_id)
+        return {"error": f"No {model_name} data cached. Please run 'Process Image' first."}
         
     except Exception as e:
         print(f"Error getting pixel value: {e}")

@@ -10,7 +10,14 @@ class ThresholdController {
         this.inspectionEnabled = false;
         this.inspectionModelId = null;
         this.pixelPopup = null;
+        this.originalOverlayUrl = null;
+        this.originalModelName = null;
+        
+        // Bind methods for event handlers
+        this._boundHandleMapClick = this._handleMapClickInternal.bind(this);
     }
+
+    // ========== PIXEL VALUE INSPECTION ==========
 
     /**
      * Toggle pixel value inspection mode
@@ -20,27 +27,30 @@ class ThresholdController {
             this.disablePixelInspection();
             btnElement.classList.remove('active');
         } else {
-            this.enablePixelInspection(modelId, result);
-            
-            // Update button states
-            document.querySelectorAll('.btn-inspect').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            btnElement.classList.add('active');
+            this.enablePixelInspection(modelId, result, btnElement);
         }
     }
 
     /**
      * Enable pixel value inspection
      */
-    enablePixelInspection(modelId, result) {
+    enablePixelInspection(modelId, result, btnElement) {
+        // Disable any previous inspection
+        this.disablePixelInspection();
+        
         this.inspectionEnabled = true;
         this.inspectionModelId = modelId;
         this.inspectionResult = result;
 
+        // Update all inspect button states
+        document.querySelectorAll('.pixel-value-btn, .btn-inspect').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        btnElement.classList.add('active');
+
         if (window.mapManager && window.mapManager.map) {
             window.mapManager.map.getContainer().style.cursor = 'crosshair';
-            window.mapManager.map.on('click', this.handleMapClick.bind(this));
+            window.mapManager.map.on('click', this._boundHandleMapClick);
         }
 
         this.platform.showNotification('Click on the map to inspect pixel values', 'info');
@@ -55,25 +65,41 @@ class ThresholdController {
         this.inspectionResult = null;
         this.hidePixelPopup();
 
+        // Remove active state from all inspect buttons
+        document.querySelectorAll('.pixel-value-btn.active, .btn-inspect.active').forEach(btn => {
+            btn.classList.remove('active');
+        });
+
         if (window.mapManager && window.mapManager.map) {
             window.mapManager.map.getContainer().style.cursor = '';
-            window.mapManager.map.off('click', this.handleMapClick.bind(this));
+            window.mapManager.map.off('click', this._boundHandleMapClick);
         }
     }
 
     /**
-     * Handle map click for pixel inspection
+     * Internal map click handler for pixel inspection
      */
-    async handleMapClick(e) {
+    async _handleMapClickInternal(e) {
         if (!this.inspectionEnabled) return;
 
         const latlng = e.latlng;
-        const selectedImage = this.platform.imageSearch?.getSelectedImage();
         
-        if (!selectedImage) {
+        // Get the selected image from image search
+        let selectedImage = null;
+        if (this.platform.imageSearch) {
+            selectedImage = this.platform.imageSearch.getSelectedImage?.() || 
+                           { id: this.platform.selectedImageId };
+        } else {
+            selectedImage = { id: this.platform.selectedImageId };
+        }
+        
+        if (!selectedImage || !selectedImage.id) {
             this.platform.showNotification('No image selected', 'warning');
             return;
         }
+
+        // Show loading popup
+        this.showPixelPopup(latlng, 'Loading...', null);
 
         try {
             const response = await fetch('/api/get-pixel-value', {
@@ -90,14 +116,14 @@ class ThresholdController {
             const data = await response.json();
             
             if (data.error) {
-                this.showPixelPopup(latlng, data.error, null);
+                this.showPixelPopup(latlng, `Error: ${data.error}`, null);
             } else {
                 this.showPixelPopup(latlng, data.value, this.inspectionResult?.colormap);
             }
 
         } catch (error) {
             console.error('Pixel value error:', error);
-            this.showPixelPopup(latlng, 'Error', null);
+            this.showPixelPopup(latlng, 'Error fetching value', null);
         }
     }
 
@@ -108,12 +134,20 @@ class ThresholdController {
         this.hidePixelPopup();
 
         const label = colormap?.label || 'Value';
-        const formattedValue = typeof value === 'number' ? value.toFixed(4) : value;
+        let formattedValue = value;
+        let valueClass = 'pixel-value';
+        
+        if (typeof value === 'number') {
+            formattedValue = value.toFixed(4);
+        } else if (typeof value === 'string') {
+            // Handle special messages (not numbers)
+            valueClass = 'pixel-value pixel-value-text';
+        }
 
         const content = `
             <div class="pixel-popup">
                 <div class="pixel-label">${label}</div>
-                <div class="pixel-value">${formattedValue}</div>
+                <div class="${valueClass}">${formattedValue}</div>
                 <div class="pixel-coords">${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}</div>
             </div>
         `;
@@ -136,129 +170,225 @@ class ThresholdController {
         }
     }
 
+    // ========== THRESHOLD CONTROL ==========
+
     /**
      * Toggle threshold control
      */
     async toggleThresholdControl(modelId, result, btnElement) {
         if (this.activeThresholdModelId === modelId) {
-            this.disableThresholdControl(btnElement);
+            this.hideThresholdUI(btnElement);
         } else {
-            await this.enableThresholdControl(modelId, result, btnElement);
+            await this.showThresholdUI(modelId, result, btnElement);
         }
     }
 
     /**
-     * Enable threshold control
+     * Show threshold UI below the colorbar
      */
-    async enableThresholdControl(modelId, result, btnElement) {
-        // Disable any existing threshold control
+    async showThresholdUI(modelId, result, btnElement) {
+        // Hide any existing threshold UI
         if (this.activeThresholdModelId) {
-            const prevBtn = document.querySelector(`.analysis-item[data-model-id="${this.activeThresholdModelId}"] .btn-threshold`);
-            if (prevBtn) this.disableThresholdControl(prevBtn);
+            const prevBtn = document.querySelector(`.analysis-item[data-model-id="${this.activeThresholdModelId}"] .threshold-btn`);
+            if (prevBtn) this.hideThresholdUI(prevBtn);
         }
 
         this.activeThresholdModelId = modelId;
         btnElement.classList.add('active');
-
+        
+        // Store original overlay URL
         const analysisItem = btnElement.closest('.analysis-item');
+        this.originalOverlayUrl = result.overlay_url || analysisItem?.dataset.originalOverlayUrl;
+        this.originalModelName = result.name || modelId;
+
         this.createThresholdUI(analysisItem, modelId, result);
     }
 
     /**
-     * Disable threshold control
+     * Hide threshold UI
      */
-    disableThresholdControl(btnElement) {
-        const analysisItem = btnElement.closest('.analysis-item');
-        const thresholdUI = analysisItem?.querySelector('.threshold-controls');
+    hideThresholdUI(btnElement) {
+        const analysisItem = btnElement?.closest('.analysis-item');
+        const thresholdUI = analysisItem?.querySelector('.threshold-inline');
         if (thresholdUI) thresholdUI.remove();
 
-        btnElement.classList.remove('active');
+        if (btnElement) btnElement.classList.remove('active');
         this.activeThresholdModelId = null;
     }
 
     /**
-     * Create threshold UI
+     * Create threshold UI - draggable handles on colormap
      */
     createThresholdUI(analysisItem, modelId, result) {
         // Remove existing UI
-        const existing = analysisItem.querySelector('.threshold-controls');
+        const existing = analysisItem?.querySelector('.threshold-inline');
         if (existing) existing.remove();
 
-        const colormap = result.colormap || { min_val: -1, max_val: 1 };
+        if (!analysisItem) return;
+
+        const colormap = result.colormap || { min_val: -1, max_val: 1, name: 'RdYlGn' };
         const minVal = colormap.min_val;
         const maxVal = colormap.max_val;
-        const step = (maxVal - minVal) / 100;
+        const colormapName = colormap.name || 'RdYlGn';
+
+        // Get the gradient class from the existing colorbar
+        const existingColorbar = analysisItem.querySelector('.colorbar-gradient');
+        const gradientClass = existingColorbar ? existingColorbar.className.replace('colorbar-gradient', '').trim() : colormapName;
 
         const thresholdUI = document.createElement('div');
-        thresholdUI.className = 'threshold-controls';
+        thresholdUI.className = 'threshold-inline';
         thresholdUI.innerHTML = `
-            <div class="threshold-header">
-                <span>Threshold Range</span>
-                <button class="btn-small btn-close-threshold">✕</button>
-            </div>
-            <div class="threshold-inputs">
-                <div class="threshold-input-group">
-                    <label>Min</label>
-                    <input type="number" id="threshold-min-${modelId}" 
-                           value="${minVal.toFixed(3)}" step="${step.toFixed(4)}" 
-                           min="${minVal}" max="${maxVal}">
-                </div>
-                <div class="threshold-input-group">
-                    <label>Max</label>
-                    <input type="number" id="threshold-max-${modelId}" 
-                           value="${maxVal.toFixed(3)}" step="${step.toFixed(4)}" 
-                           min="${minVal}" max="${maxVal}">
+            <div class="threshold-colormap-slider">
+                <div class="threshold-colormap-track">
+                    <div class="threshold-colormap-gradient colorbar-gradient ${gradientClass}"></div>
+                    <div class="threshold-selection"></div>
+                    <div class="threshold-handle min-handle" data-handle="min"></div>
+                    <div class="threshold-handle max-handle" data-handle="max"></div>
                 </div>
             </div>
-            <div class="threshold-slider">
-                <input type="range" id="threshold-slider-min-${modelId}" 
-                       min="${minVal}" max="${maxVal}" step="${step}" value="${minVal}">
-                <input type="range" id="threshold-slider-max-${modelId}" 
-                       min="${minVal}" max="${maxVal}" step="${step}" value="${maxVal}">
+            <div class="threshold-values-row">
+                <div class="threshold-value-group">
+                    <span class="threshold-value-label">Min:</span>
+                    <input type="number" class="threshold-input min-input" 
+                           value="${minVal.toFixed(3)}" step="0.001" 
+                           min="${minVal}" max="${maxVal}">
+                </div>
+                <div class="threshold-value-group">
+                    <span class="threshold-value-label">Max:</span>
+                    <input type="number" class="threshold-input max-input" 
+                           value="${maxVal.toFixed(3)}" step="0.001" 
+                           min="${minVal}" max="${maxVal}">
+                </div>
             </div>
-            <button class="btn btn-primary btn-apply-threshold" id="apply-threshold-${modelId}">
-                Apply Threshold
-            </button>
+            <div class="threshold-actions">
+                <button class="threshold-btn-apply">Apply</button>
+                <button class="threshold-btn-cancel">Cancel</button>
+            </div>
         `;
 
-        analysisItem.appendChild(thresholdUI);
+        // Insert after colorbar-container within analysis-info
+        const colorbarContainer = analysisItem.querySelector('.colorbar-container');
+        if (colorbarContainer) {
+            colorbarContainer.after(thresholdUI);
+        } else {
+            const analysisInfo = analysisItem.querySelector('.analysis-info');
+            if (analysisInfo) {
+                analysisInfo.appendChild(thresholdUI);
+            } else {
+                analysisItem.appendChild(thresholdUI);
+            }
+        }
 
-        // Event listeners
-        const closeBtn = thresholdUI.querySelector('.btn-close-threshold');
-        closeBtn.addEventListener('click', () => {
-            const thresholdBtn = analysisItem.querySelector('.btn-threshold');
-            this.disableThresholdControl(thresholdBtn);
+        // Store references
+        const track = thresholdUI.querySelector('.threshold-colormap-track');
+        const minHandle = thresholdUI.querySelector('.min-handle');
+        const maxHandle = thresholdUI.querySelector('.max-handle');
+        const selection = thresholdUI.querySelector('.threshold-selection');
+        const minInput = thresholdUI.querySelector('.min-input');
+        const maxInput = thresholdUI.querySelector('.max-input');
+        const applyBtn = thresholdUI.querySelector('.threshold-btn-apply');
+        const cancelBtn = thresholdUI.querySelector('.threshold-btn-cancel');
+
+        // Current values
+        let currentMin = minVal;
+        let currentMax = maxVal;
+
+        // Update handle positions and selection
+        const updateUI = () => {
+            const trackWidth = track.offsetWidth;
+            const range = maxVal - minVal;
+            const minPos = ((currentMin - minVal) / range) * trackWidth;
+            const maxPos = ((currentMax - minVal) / range) * trackWidth;
+            
+            minHandle.style.left = `${minPos}px`;
+            maxHandle.style.left = `${maxPos}px`;
+            selection.style.left = `${minPos}px`;
+            selection.style.width = `${maxPos - minPos}px`;
+        };
+
+        // Initialize positions
+        setTimeout(updateUI, 0);
+
+        // Drag handling
+        const startDrag = (handle, isMin) => {
+            const onMove = (e) => {
+                e.preventDefault();
+                const rect = track.getBoundingClientRect();
+                const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+                const ratio = Math.max(0, Math.min(1, x / rect.width));
+                const value = minVal + ratio * (maxVal - minVal);
+
+                if (isMin) {
+                    currentMin = Math.min(value, currentMax - 0.001);
+                    minInput.value = currentMin.toFixed(3);
+                } else {
+                    currentMax = Math.max(value, currentMin + 0.001);
+                    maxInput.value = currentMax.toFixed(3);
+                }
+                updateUI();
+            };
+
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+            };
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            document.addEventListener('touchmove', onMove);
+            document.addEventListener('touchend', onUp);
+        };
+
+        minHandle.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(minHandle, true); });
+        maxHandle.addEventListener('mousedown', (e) => { e.preventDefault(); startDrag(maxHandle, false); });
+        minHandle.addEventListener('touchstart', (e) => { e.preventDefault(); startDrag(minHandle, true); });
+        maxHandle.addEventListener('touchstart', (e) => { e.preventDefault(); startDrag(maxHandle, false); });
+
+        // Input change handlers
+        minInput.addEventListener('change', () => {
+            currentMin = Math.max(minVal, Math.min(parseFloat(minInput.value), currentMax - 0.001));
+            minInput.value = currentMin.toFixed(3);
+            updateUI();
         });
 
-        const minInput = thresholdUI.querySelector(`#threshold-min-${modelId}`);
-        const maxInput = thresholdUI.querySelector(`#threshold-max-${modelId}`);
-        const minSlider = thresholdUI.querySelector(`#threshold-slider-min-${modelId}`);
-        const maxSlider = thresholdUI.querySelector(`#threshold-slider-max-${modelId}`);
+        maxInput.addEventListener('change', () => {
+            currentMax = Math.min(maxVal, Math.max(parseFloat(maxInput.value), currentMin + 0.001));
+            maxInput.value = currentMax.toFixed(3);
+            updateUI();
+        });
 
-        // Sync inputs and sliders
-        minInput.addEventListener('input', () => minSlider.value = minInput.value);
-        maxInput.addEventListener('input', () => maxSlider.value = maxInput.value);
-        minSlider.addEventListener('input', () => minInput.value = parseFloat(minSlider.value).toFixed(3));
-        maxSlider.addEventListener('input', () => maxInput.value = parseFloat(maxSlider.value).toFixed(3));
+        // Prevent click propagation to analysis item
+        thresholdUI.addEventListener('click', (e) => e.stopPropagation());
 
         // Apply button
-        const applyBtn = thresholdUI.querySelector(`#apply-threshold-${modelId}`);
-        applyBtn.addEventListener('click', () => {
-            this.applyThresholdRange(
-                modelId, 
-                result, 
-                parseFloat(minInput.value), 
-                parseFloat(maxInput.value)
-            );
+        applyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.applyThreshold(analysisItem, modelId, result, currentMin, currentMax);
+        });
+
+        // Cancel button - closes UI and restores colormap
+        cancelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.restoreColormap(analysisItem, modelId, result);
+            const thresholdBtn = analysisItem.querySelector('.threshold-btn');
+            this.hideThresholdUI(thresholdBtn);
         });
     }
 
     /**
-     * Apply threshold range
+     * Apply threshold and show binary mask
      */
-    async applyThresholdRange(modelId, result, minThreshold, maxThreshold) {
-        const selectedImage = this.platform.imageSearch?.getSelectedImage();
-        if (!selectedImage) {
+    async applyThreshold(analysisItem, modelId, result, minThreshold, maxThreshold) {
+        // Get the selected image
+        let imageId = this.platform.selectedImageId;
+        if (!imageId && this.platform.imageSearch?.getSelectedImage) {
+            const img = this.platform.imageSearch.getSelectedImage();
+            imageId = img?.id;
+        }
+        
+        if (!imageId) {
             this.platform.showNotification('No image selected', 'warning');
             return;
         }
@@ -270,7 +400,7 @@ class ThresholdController {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    image_id: selectedImage.id,
+                    image_id: imageId,
                     model_id: modelId,
                     min_threshold: minThreshold,
                     max_threshold: maxThreshold,
@@ -278,20 +408,42 @@ class ThresholdController {
                 })
             });
 
-            if (!response.ok) throw new Error(`Failed: ${response.status}`);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || `Failed: ${response.status}`);
+            }
+            
             const data = await response.json();
 
-            // Update the overlay
-            if (window.mapManager && data.overlay_url) {
+            if (data.overlay_url && window.mapManager) {
+                // Hide original colormap layer
+                window.mapManager.hideAnalysisLayer(modelId);
+                
+                // Show binary mask
                 await window.mapManager.showAnalysisLayer(
-                    `${modelId}-threshold`,
+                    modelId,
                     data.overlay_url,
-                    data.name
+                    `${result.name} (Binary)`
                 );
+
+                // Update analysis item state to use binary map
+                if (analysisItem) {
+                    analysisItem.dataset.currentOverlayUrl = data.overlay_url;
+                    analysisItem.dataset.isBinary = 'true';
+                    analysisItem.dataset.active = 'true';
+                    analysisItem.classList.add('active');
+                    
+                    const statusEl = analysisItem.querySelector('.analysis-status');
+                    if (statusEl) {
+                        statusEl.textContent = 'Binary mask active';
+                        statusEl.classList.remove('inactive');
+                        statusEl.classList.add('active');
+                    }
+                }
             }
 
             this.platform.hideLoading();
-            this.platform.showNotification('Threshold applied', 'success');
+            this.platform.showNotification(`Threshold applied: ${minThreshold.toFixed(3)} ~ ${maxThreshold.toFixed(3)}`, 'success');
 
         } catch (error) {
             console.error('Threshold error:', error);
@@ -301,18 +453,63 @@ class ThresholdController {
     }
 
     /**
+     * Restore original colormap
+     */
+    async restoreColormap(analysisItem, modelId, result) {
+        const originalUrl = this.originalOverlayUrl || analysisItem?.dataset.originalOverlayUrl || result.overlay_url;
+        
+        if (!originalUrl) {
+            this.platform.showNotification('Original colormap not found', 'error');
+            return;
+        }
+
+        if (window.mapManager) {
+            // Hide current layer
+            window.mapManager.hideAnalysisLayer(modelId);
+            
+            // Show original colormap
+            await window.mapManager.showAnalysisLayer(
+                modelId,
+                originalUrl,
+                this.originalModelName || result.name
+            );
+
+            // Update analysis item state
+            if (analysisItem) {
+                analysisItem.dataset.currentOverlayUrl = originalUrl;
+                analysisItem.dataset.isBinary = 'false';
+                analysisItem.dataset.active = 'true';
+                analysisItem.classList.add('active');
+                
+                const statusEl = analysisItem.querySelector('.analysis-status');
+                if (statusEl) {
+                    statusEl.textContent = 'Overlay active';
+                    statusEl.classList.remove('inactive');
+                    statusEl.classList.add('active');
+                }
+            }
+        }
+        
+        this.platform.showNotification('Restored original colormap', 'info');
+    }
+
+    /**
      * Disable all active controls
      */
     disableAll() {
         this.disablePixelInspection();
         
-        document.querySelectorAll('.btn-inspect.active').forEach(btn => {
+        // Remove all threshold control panels
+        document.querySelectorAll('.threshold-inline, .threshold-controls').forEach(panel => {
+            panel.remove();
+        });
+        
+        // Remove active states from buttons
+        document.querySelectorAll('.threshold-btn.active, .pixel-value-btn.active, .btn-inspect.active').forEach(btn => {
             btn.classList.remove('active');
         });
         
-        document.querySelectorAll('.btn-threshold.active').forEach(btn => {
-            this.disableThresholdControl(btn);
-        });
+        this.activeThresholdModelId = null;
     }
 }
 
@@ -320,4 +517,3 @@ class ThresholdController {
 if (typeof window !== 'undefined') {
     window.ThresholdController = ThresholdController;
 }
-

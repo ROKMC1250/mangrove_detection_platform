@@ -14,6 +14,8 @@ from ..core.config import (
     SERVICE_ACCOUNT_KEY_PATH,
     GCS_BUCKET,
     validate_service_account,
+    EMIT_COLLECTION,
+    EMIT_BAND_COUNT,
 )
 
 # Global EE initialization flag
@@ -83,6 +85,101 @@ def get_s1_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollect
         .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VH'))
         .filter(ee.Filter.inList('orbitProperties_pass', ['ASCENDING', 'DESCENDING']))
     )
+
+
+def get_emit_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollection:
+    """Get EMIT L2A Reflectance collection filtered by AOI and date range."""
+    return (
+        ee.ImageCollection(EMIT_COLLECTION)
+        .filterBounds(aoi)
+        .filterDate(start, end)
+    )
+
+
+def resolve_emit_image(item_id: str) -> ee.Image:
+    """Resolve EMIT item ID to an Earth Engine Image."""
+    try:
+        if "/" in item_id or item_id.startswith("NASA/"):
+            return ee.Image(item_id)
+        else:
+            return ee.Image(f"{EMIT_COLLECTION}/{item_id}")
+    except Exception as e:
+        raise ValueError(f"Invalid EMIT item_id: {e}")
+
+
+def get_emit_band_metadata(img: ee.Image) -> List[Dict[str, any]]:
+    """Get band metadata (names and wavelengths) from EMIT image.
+    
+    Returns:
+        List of dicts with 'name' and 'wavelength_nm' keys
+    """
+    try:
+        # Get band names from the image
+        band_names = img.bandNames().getInfo()
+        
+        # EMIT bands are typically named with wavelength in nm
+        # Format is usually like 'RFL_380', 'RFL_381', etc. or just wavelength numbers
+        band_metadata = []
+        
+        for band_name in band_names:
+            # Try to extract wavelength from band name
+            wavelength = None
+            try:
+                # EMIT bands might be named like 'RFL_380' or just '380'
+                if '_' in band_name:
+                    # Extract number after underscore
+                    parts = band_name.split('_')
+                    if len(parts) > 1:
+                        wavelength_str = parts[-1]
+                        wavelength = float(wavelength_str)
+                elif band_name.isdigit() or (band_name.replace('.', '').isdigit()):
+                    wavelength = float(band_name)
+                else:
+                    # Try to extract any number from the band name
+                    import re
+                    numbers = re.findall(r'\d+\.?\d*', band_name)
+                    if numbers:
+                        wavelength = float(numbers[0])
+            except (ValueError, AttributeError):
+                pass
+            
+            band_metadata.append({
+                'name': band_name,
+                'wavelength_nm': wavelength,
+            })
+        
+        return band_metadata
+    except Exception as e:
+        print(f"Error getting EMIT band metadata: {e}")
+        # Fallback: return band names without wavelength
+        try:
+            band_names = img.bandNames().getInfo()
+            return [{'name': name, 'wavelength_nm': None} for name in band_names]
+        except Exception:
+            return []
+
+
+def build_feature_collection_simple_emit(col: ee.ImageCollection, aoi: ee.Geometry) -> ee.FeatureCollection:
+    """Lightweight feature collection builder for EMIT."""
+    aoi_area = aoi.area(1)
+    
+    def _map(img):
+        footprint = img.geometry(1)
+        inter = footprint.intersection(aoi, 1)
+        inter_area = inter.area(1)
+        ratio = inter_area.divide(aoi_area)
+        
+        # Get band count
+        band_count = img.bandNames().size()
+        
+        return ee.Feature(None, {
+            'id': img.id(),
+            'datetime': img.get('system:time_start'),
+            'band_count': band_count,
+            'aoi_overlap': ratio
+        })
+    
+    return ee.FeatureCollection(col.map(_map))
 
 
 def get_visualization_params() -> dict:

@@ -359,10 +359,10 @@ def run_detection(req: TargetDetectionRequest):
 @router.post("/target-detection/apply-threshold")
 def apply_detection_threshold(req: TargetDetectionThresholdRequest):
     """
-    Apply a new threshold to existing detection results.
+    Apply a new threshold range to existing detection results.
     """
     try:
-        print(f"TARGET DETECTION - Applying threshold {req.threshold} to {req.detection_id}")
+        print(f"TARGET DETECTION - Applying threshold {req.min_threshold:.3f}-{req.max_threshold:.3f} to {req.detection_id}")
         
         # Get cached detection result
         with TARGET_DETECTION_CACHE_LOCK:
@@ -376,8 +376,8 @@ def apply_detection_threshold(req: TargetDetectionThresholdRequest):
         
         detection_map = cached['detection_map']
         
-        # Create new binary mask at specified threshold
-        binary_mask = detection_map >= req.threshold
+        # Create new binary mask within threshold range
+        binary_mask = (detection_map >= req.min_threshold) & (detection_map <= req.max_threshold)
         
         # Create mask overlay (red color)
         mask_rgb = np.zeros((*binary_mask.shape, 3), dtype=np.uint8)
@@ -422,12 +422,13 @@ def apply_detection_threshold(req: TargetDetectionThresholdRequest):
         
         return {
             'detection_id': req.detection_id,
-            'threshold': req.threshold,
+            'min_threshold': req.min_threshold,
+            'max_threshold': req.max_threshold,
             'detected_pixels': n_detected,
             'total_pixels': total_pixels,
             'detection_percentage': detection_percentage,
             'mask_result': {
-                'name': f'{cached["algorithm"]} Detection Mask (threshold: {req.threshold:.4f})',
+                'name': f'{cached["algorithm"]} Detection Mask ({req.min_threshold:.3f} - {req.max_threshold:.3f})',
                 'preview_url': f"data:image/png;base64,{mask_preview_b64}",
                 'overlay_url': mask_overlay_url,
                 'type': 'detection_mask',

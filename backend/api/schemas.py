@@ -93,6 +93,15 @@ class S2TileRequest(BaseModel):
     max: Optional[float] = 3000
 
 
+class EmitTileRequest(BaseModel):
+    item_id: str
+    bbox: List[float]
+    geometry: Optional[Dict] = None
+    bands: Optional[List[str]] = None
+    min: Optional[float] = 0
+    max: Optional[float] = 10000
+
+
 class DownloadImageRequest(BaseModel):
     item_id: str
     bbox: List[float]
@@ -125,7 +134,8 @@ class TargetDetectionRequest(BaseModel):
 
 class TargetDetectionThresholdRequest(BaseModel):
     detection_id: str
-    threshold: float
+    min_threshold: float
+    max_threshold: float
     bbox: List[float]
 
 
@@ -134,4 +144,16 @@ class TargetSpectrumRequest(BaseModel):
     bbox: List[float]
     lat: float
     lng: float
+
+
+class ProcessEmitImageRequest(BaseModel):
+    item_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    geometry: Optional[Dict] = None
+    selected_bands: List[str] = Field(..., description="List of band names to process")
+    visualization_type: str = Field(default="rgb", description="Type: 'rgb' or 'index'")
+    rgb_bands: Optional[List[str]] = Field(default=None, description="For RGB: [R, G, B] band names")
+    index_bands: Optional[List[str]] = Field(default=None, description="For index: [A, B] band names")
+    colormap: Optional[str] = Field(default="RdYlGn", description="Colormap for index visualization")
+    job_id: Optional[str] = None
 

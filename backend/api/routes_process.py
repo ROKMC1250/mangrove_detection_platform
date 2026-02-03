@@ -18,12 +18,13 @@ from rasterio.io import MemoryFile
 
 from fastapi import APIRouter, HTTPException
 
-from .schemas import ProcessImageRequest, ChangeMonitoringRequest, ProcessSpectralImageRequest
+from .schemas import ProcessImageRequest, ChangeMonitoringRequest, ProcessSpectralImageRequest, ProcessEmitImageRequest
 from ..core.config import PROJECT_ROOT, S2_BANDS, OUTPUTS_DIR
 from ..core.progress import PROGRESS_TRACKER, estimate_download_time, estimate_processing_time
 from ..services.earth_engine import (
     bbox_to_geometry,
     resolve_item_to_image,
+    resolve_emit_image,
     get_model_names,
 )
 from ..services.downloader import (
@@ -303,9 +304,12 @@ async def process_image(req: ProcessImageRequest):
             else:
                 l, b, r, t = ds.bounds
         
-        # Band order: B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12, mask
-        B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12 = data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9]
-        MASK = data[10]
+        # Band order: B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12, mask
+        B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12 = (
+            data[0], data[1], data[2], data[3], data[4], data[5], 
+            data[6], data[7], data[8], data[9], data[10], data[11]
+        )
+        MASK = data[12]
         
         # Index Calculation phase
         PROGRESS_TRACKER.start_phase(job_id, "Index Calculation", total_steps=4)
@@ -432,18 +436,22 @@ async def process_image(req: ProcessImageRequest):
             'name': 'viridis', 'min_val': float(mvi_min), 'max_val': float(mvi_max), 'label': 'MVI'
         }
         
-        # Add overlay URLs
-        if cloud_overlay_png_path and cloud_overlay_meta:
-            analysis_results['cloud_mask']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + cloud_overlay_png_path)}"
-        if model1_overlay_png_path and model1_overlay_meta:
-            analysis_results['model1']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + model1_overlay_png_path)}"
+        # Add overlay URLs (use /outputs/ static mount for direct access)
+        def to_outputs_url(path):
+            """Convert absolute path to /outputs/filename URL"""
+            return f"/outputs/{os.path.basename(path)}"
         
-        analysis_results['model2']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + ndvi_png_aoi)}"
-        analysis_results['model3']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + ndmi_png_aoi)}"
-        analysis_results['model4']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + mvi_png_aoi)}"
+        if cloud_overlay_png_path and cloud_overlay_meta:
+            analysis_results['cloud_mask']['overlay_url'] = to_outputs_url(cloud_overlay_png_path)
+        if model1_overlay_png_path and model1_overlay_meta:
+            analysis_results['model1']['overlay_url'] = to_outputs_url(model1_overlay_png_path)
+        
+        analysis_results['model2']['overlay_url'] = to_outputs_url(ndvi_png_aoi)
+        analysis_results['model3']['overlay_url'] = to_outputs_url(ndmi_png_aoi)
+        analysis_results['model4']['overlay_url'] = to_outputs_url(mvi_png_aoi)
         
         if alphaearth_png_aoi:
-            analysis_results['model5']['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + alphaearth_png_aoi)}"
+            analysis_results['model5']['overlay_url'] = to_outputs_url(alphaearth_png_aoi)
         
         analysis_results['overlay_meta'] = model1_overlay_meta or {
             'width': int(aoi_w), 'height': int(aoi_h),
@@ -561,12 +569,13 @@ async def change_monitoring(req: ChangeMonitoringRequest):
                 cache_raster_file(first_image_id, req.bbox, temp_path)
                 
                 # Analyze
+                # Band order: B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12, mask
                 with rasterio.open(temp_path) as src:
                     data = src.read()
-                    B4 = data[0].astype(np.float32)
-                    B3 = data[1].astype(np.float32)
-                    B8 = data[3].astype(np.float32)
-                    MASK = data[6]
+                    B3 = data[2].astype(np.float32)   # Green
+                    B4 = data[3].astype(np.float32)   # Red
+                    B8 = data[7].astype(np.float32)   # NIR
+                    MASK = data[12]
                     
                     mask_bool = (MASK > 0)
                     
@@ -736,6 +745,208 @@ async def process_spectral_image(req: ProcessSpectralImageRequest):
         raise
     except Exception as e:
         print(f"SPECTRAL IMAGE ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/process-emit-image")
+async def process_emit_image(req: ProcessEmitImageRequest):
+    """Process EMIT hyperspectral image with selected bands for custom visualization only."""
+    try:
+        t0 = time.time()
+        job_id = req.job_id or f"emit-{int(t0)}"
+        print(f"EMIT PROCESS - Starting with job_id: {job_id}, bands: {req.selected_bands}")
+        
+        # Validate band selection
+        if len(req.selected_bands) == 0:
+            raise HTTPException(status_code=400, detail="At least one band must be selected")
+        
+        if len(req.selected_bands) > 50:
+            raise HTTPException(status_code=400, detail="Maximum 50 bands can be selected")
+        
+        # Initialize progress tracking
+        phases = [
+            ("Initialization", 10.0),
+            ("Download", 50.0),
+            ("Visualization", 30.0),
+            ("Finalization", 10.0)
+        ]
+        PROGRESS_TRACKER.create_job(job_id, phases)
+        
+        # Initialization phase
+        PROGRESS_TRACKER.start_phase(job_id, "Initialization", total_steps=3)
+        PROGRESS_TRACKER.update_phase(job_id, "Initialization", 1, "Setting up AOI geometry")
+        
+        aoi = bbox_to_geometry(req.bbox, req.geometry)
+        aoi_rect = aoi.bounds()
+        
+        PROGRESS_TRACKER.update_phase(job_id, "Initialization", 2, "Resolving EMIT image")
+        base_img = resolve_emit_image(req.item_id).clip(aoi)
+        
+        # Select only requested bands
+        selected_bands = req.selected_bands
+        img = base_img.select(selected_bands)
+        
+        PROGRESS_TRACKER.update_phase(job_id, "Initialization", 3, "Preparing for download")
+        PROGRESS_TRACKER.complete_phase(job_id, "Initialization", "Ready for download")
+        
+        # Generate output path
+        out_path = generate_output_path("emit", req.item_id)
+        
+        # Download phase
+        PROGRESS_TRACKER.start_phase(job_id, "Download", total_steps=1)
+        download_ee_image(img, selected_bands, aoi_rect, 60, out_path, job_id)  # EMIT uses 60m resolution
+        
+        # Cache the raster file
+        cache_raster_file(req.item_id, req.bbox, out_path)
+        
+        PROGRESS_TRACKER.complete_phase(job_id, "Download", "Download complete")
+        
+        # Visualization phase
+        PROGRESS_TRACKER.start_phase(job_id, "Visualization", total_steps=1)
+        
+        min_lon, min_lat, max_lon, max_lat = req.bbox
+        
+        with rasterio.open(out_path) as ds:
+            data = ds.read().astype(np.float32)
+            src_transform = ds.transform
+            src_crs = ds.crs
+            height, width = ds.height, ds.width
+        
+        # Create mask (all valid pixels)
+        mask = np.ones((height, width), dtype=bool)
+        for i in range(data.shape[0]):
+            mask &= np.isfinite(data[i])
+        
+        visualization_results = {}
+        
+        if req.visualization_type == "rgb":
+            # RGB composite visualization
+            if req.rgb_bands is None or len(req.rgb_bands) != 3:
+                raise HTTPException(status_code=400, detail="RGB visualization requires exactly 3 bands")
+            
+            # Find band indices
+            r_idx = selected_bands.index(req.rgb_bands[0]) if req.rgb_bands[0] in selected_bands else None
+            g_idx = selected_bands.index(req.rgb_bands[1]) if req.rgb_bands[1] in selected_bands else None
+            b_idx = selected_bands.index(req.rgb_bands[2]) if req.rgb_bands[2] in selected_bands else None
+            
+            if r_idx is None or g_idx is None or b_idx is None:
+                raise HTTPException(status_code=400, detail="RGB bands must be in selected_bands list")
+            
+            # Extract RGB bands
+            r_band = data[r_idx]
+            g_band = data[g_idx]
+            b_band = data[b_idx]
+            
+            # Stretch to uint8
+            r_stretched = stretch_uint8(r_band)
+            g_stretched = stretch_uint8(g_band)
+            b_stretched = stretch_uint8(b_band)
+            
+            # Create RGB composite
+            rgb_composite = np.dstack([r_stretched, g_stretched, b_stretched])
+            rgb_composite[~mask] = 0
+            
+            # Create preview thumbnail
+            from PIL import Image
+            import io as pyio
+            img_pil = Image.fromarray(rgb_composite, mode='RGB')
+            img_pil.thumbnail((512, 512), Image.LANCZOS)
+            buf = pyio.BytesIO()
+            img_pil.save(buf, format='PNG')
+            preview_bytes = buf.getvalue()
+            
+            # Create AOI-aligned overlay
+            aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
+                rgb_composite, mask, src_transform, src_crs,
+                (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
+            )
+            
+            # Save overlay
+            overlay_png_path = generate_overlay_path("emit_rgb_overlay")
+            save_rgba_overlay_png_with_transparency(aoi_rgb, aoi_mask, overlay_png_path)
+            
+            visualization_results['preview'] = base64.b64encode(preview_bytes).decode('utf-8')
+            visualization_results['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + overlay_png_path)}"
+            visualization_results['overlay_meta'] = {
+                'width': int(aoi_w),
+                'height': int(aoi_h),
+                'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
+            }
+            
+        elif req.visualization_type == "index":
+            # Custom index visualization
+            if req.index_bands is None or len(req.index_bands) != 2:
+                raise HTTPException(status_code=400, detail="Index visualization requires exactly 2 bands")
+            
+            # Find band indices
+            a_idx = selected_bands.index(req.index_bands[0]) if req.index_bands[0] in selected_bands else None
+            b_idx = selected_bands.index(req.index_bands[1]) if req.index_bands[1] in selected_bands else None
+            
+            if a_idx is None or b_idx is None:
+                raise HTTPException(status_code=400, detail="Index bands must be in selected_bands list")
+            
+            # Calculate normalized difference index
+            band_a = data[a_idx]
+            band_b = data[b_idx]
+            
+            index = safe_divide(band_a - band_b, band_a + band_b)
+            
+            # Create visualization
+            index_rgb, actual_min, actual_max = create_index_visualization(
+                index, req.colormap or "RdYlGn", vmin=-1, vmax=1
+            )
+            valid_mask = np.isfinite(index) & mask
+            
+            # Create preview thumbnail
+            from PIL import Image
+            import io as pyio
+            img_pil = Image.fromarray(index_rgb, mode='RGB')
+            img_pil.thumbnail((512, 512), Image.LANCZOS)
+            buf = pyio.BytesIO()
+            img_pil.save(buf, format='PNG')
+            preview_bytes = buf.getvalue()
+            
+            # Create AOI-aligned overlay
+            aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
+                index_rgb, valid_mask, src_transform, src_crs,
+                (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
+            )
+            
+            # Save overlay
+            overlay_png_path = generate_overlay_path("emit_index_overlay")
+            save_rgba_overlay_png_with_transparency(aoi_rgb, aoi_mask, overlay_png_path)
+            
+            visualization_results['preview'] = base64.b64encode(preview_bytes).decode('utf-8')
+            visualization_results['overlay_url'] = f"/api/proxy-file?path={requests.utils.quote('file://' + overlay_png_path)}"
+            visualization_results['overlay_meta'] = {
+                'width': int(aoi_w),
+                'height': int(aoi_h),
+                'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
+            }
+            visualization_results['range'] = {'min': float(actual_min), 'max': float(actual_max)}
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown visualization_type: {req.visualization_type}")
+        
+        PROGRESS_TRACKER.complete_phase(job_id, "Visualization", "Visualization complete")
+        
+        # Finalization
+        PROGRESS_TRACKER.start_phase(job_id, "Finalization", total_steps=1)
+        PROGRESS_TRACKER.complete_phase(job_id, "Finalization", "Processing complete")
+        PROGRESS_TRACKER.complete_job(job_id)
+        
+        return {
+            'job_id': job_id,
+            'visualization': visualization_results,
+            'selected_bands': selected_bands,
+            'visualization_type': req.visualization_type,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"EMIT PROCESS ERROR: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

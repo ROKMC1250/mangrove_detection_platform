@@ -407,7 +407,7 @@ body {
 
 .analysis-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     padding: 12px;
     background: #f8f9fa;
     border-radius: 8px;
@@ -415,6 +415,8 @@ body {
     cursor: pointer;
     transition: all 0.2s ease;
     gap: 12px;
+    flex-wrap: wrap;
+    overflow: visible;
 }
 
 .analysis-item:hover {
@@ -447,6 +449,7 @@ body {
     flex-direction: column;
     gap: 4px;
     min-width: 0;
+    width: 100%;
 }
 
 .analysis-title {
@@ -945,7 +948,7 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
@@ -956,70 +959,82 @@ body {
 
 .loading-content {
     text-align: center;
-    padding: 40px;
+    padding: 32px 40px;
     background: white;
     border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     min-width: 400px;
     max-width: 500px;
 }
 
+/* Loading Spinner - Simple and Clean */
 .loading-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #1a73e8;
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e8eaed;
+    border-top-color: #1a73e8;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 16px;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 20px;
 }
 
 @keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(360deg);
-    }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 .loading-content h3 {
-    margin-bottom: 8px;
-    color: #333;
+    margin: 0 0 8px 0;
+    color: #202124;
+    font-size: 18px;
+    font-weight: 600;
 }
 
 .loading-content p {
     color: #5f6368;
     font-size: 14px;
+    margin: 0 0 20px 0;
 }
 
-/* Progress bar */
+/* Animated Loading Bar */
 .progress {
-    width: 100%;
-    height: 12px;
+    width: 180px;
+    height: 3px;
     background: #e8eaed;
-    border-radius: 8px;
+    border-radius: 3px;
     overflow: hidden;
-    margin-top: 16px;
+    margin: 0 auto;
 }
 
 .progress-bar {
-    width: 0%;
+    width: 40%;
     height: 100%;
-    background: linear-gradient(90deg, #1a73e8, #4285f4, #34a853);
-    transition: width 0.3s ease-out;
-    display: block;
-    position: relative;
-    border-radius: 8px;
+    background: #1a73e8;
+    animation: loadingSlide 1.2s ease-in-out infinite;
+    border-radius: 3px;
 }
 
-.progress-text {
-    margin-top: 8px;
-    font-size: 13px;
+@keyframes loadingSlide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+
+/* Cancel Button */
+.loading-cancel-btn {
+    margin-top: 20px;
+    padding: 8px 20px;
+    background: white;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
     color: #5f6368;
-    text-align: center;
-    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.loading-cancel-btn:hover {
+    background: #f8f9fa;
+    border-color: #c0c0c0;
 }
 
 /* Hidden Elements */
@@ -2623,17 +2638,152 @@ body {
     height: 100%;
 }
 
+/* Colorbar with embedded threshold handles */
+.colorbar-with-threshold {
+    position: relative;
+    margin: 4px 0;
+}
+
+.colorbar-track {
+    position: relative;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #dadce0;
+    overflow: visible;
+}
+
+.colorbar-track .colorbar-gradient {
+    width: 100%;
+    height: 100%;
+    border-radius: 2px;
+}
+
+.colorbar-selection {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.4);
+    border-left: 2px solid #1a73e8;
+    border-right: 2px solid #ea4335;
+    pointer-events: none;
+    border-radius: 2px;
+}
+
+.colorbar-handle {
+    position: absolute;
+    top: -3px;
+    width: 10px;
+    height: 22px;
+    cursor: ew-resize;
+    z-index: 10;
+    transform: translateX(-50%);
+}
+
+.colorbar-handle::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 0;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #1a73e8;
+}
+
+.colorbar-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 6px;
+    width: 2px;
+    height: 16px;
+    background: #1a73e8;
+    border-radius: 0 0 1px 1px;
+}
+
+.colorbar-handle.max-handle::before {
+    border-top-color: #ea4335;
+}
+
+.colorbar-handle.max-handle::after {
+    background: #ea4335;
+}
+
 .colorbar-values {
     display: flex;
     justify-content: space-between;
-    margin-top: 2px;
-    font-size: 9px;
-    color: #5f6368;
+    align-items: center;
+    margin-top: 4px;
+    gap: 4px;
 }
 
 .colorbar-min,
 .colorbar-max {
+    font-size: 9px;
     font-weight: 500;
+    color: #5f6368;
+}
+
+.colorbar-min-input,
+.colorbar-max-input {
+    width: 55px;
+    padding: 3px 4px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 10px;
+    font-family: monospace;
+    text-align: center;
+}
+
+.colorbar-min-input {
+    border-color: #1a73e8;
+}
+
+.colorbar-max-input {
+    border-color: #ea4335;
+}
+
+.colorbar-min-input:focus,
+.colorbar-max-input:focus {
+    outline: none;
+}
+
+.colorbar-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.colorbar-apply-btn,
+.colorbar-cancel-btn {
+    padding: 3px 8px;
+    border: none;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.colorbar-apply-btn {
+    background: #1a73e8;
+    color: white;
+}
+
+.colorbar-apply-btn:hover {
+    background: #1557b0;
+}
+
+.colorbar-cancel-btn {
+    background: #f0f0f0;
+    color: #333;
+    border: 1px solid #ddd;
+}
+
+.colorbar-cancel-btn:hover {
+    background: #e0e0e0;
 }
 
 /* Colormap gradients */
@@ -3939,6 +4089,27 @@ body {
 
 .analysis-item.target-detection-option.expanded {
     border-color: #ff9800;
+    display: block;  /* Switch to block layout when expanded */
+}
+
+.analysis-item.target-detection-option.expanded > .analysis-thumbnail {
+    display: none;  /* Hide thumbnail when expanded */
+}
+
+.analysis-item.target-detection-option.expanded > .analysis-info {
+    display: none;  /* Hide info when expanded */
+}
+
+/* When threshold inline is shown, adjust layout */
+.analysis-item:has(.threshold-inline) {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.analysis-item:has(.threshold-inline) > .analysis-thumbnail {
+    width: 60px;
+    height: 60px;
+    align-self: flex-start;
 }
 
 /* Common TD UI */
@@ -3946,6 +4117,9 @@ body {
     padding: 10px;
     border-top: 1px solid #eee;
     background: #fafafa;
+    width: 100%;
+    box-sizing: border-box;
+    flex-basis: 100%;
 }
 
 /* Setup State: Algorithm + Pick + Run */
@@ -3953,6 +4127,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    width: 100%;
 }
 
 .td-setup select {
@@ -3961,6 +4136,8 @@ body {
     border-radius: 4px;
     font-size: 12px;
     background: white;
+    flex: 1;
+    min-width: 0;
 }
 
 .td-btn {
@@ -3988,23 +4165,24 @@ body {
 .td-score {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .td-colorbar {
-    height: 12px;
-    border-radius: 3px;
+    height: 10px;
+    border-radius: 4px;
     overflow: hidden;
 }
 
-.td-colorbar-gradient {
+.td-colorbar-gradient,
+.threshold-colormap-gradient.td-gradient {
     height: 100%;
     background: linear-gradient(to right, 
         #000080, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000, #800000);
 }
 
 .td-colorbar-labels {
-    display: flex;
+    display: none;  /* Hidden - values shown in input fields */
     justify-content: space-between;
     font-size: 10px;
     color: #666;
@@ -4061,19 +4239,99 @@ body {
     border: 1px solid #eee;
 }
 
+.td-mask-hint {
+    font-size: 11px;
+    color: #666;
+    text-align: center;
+}
+
+.td-btn-link {
+    background: none;
+    border: none;
+    color: #1a73e8;
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+}
+
+.td-btn-link:hover {
+    color: #1557b0;
+}
+
+/* Target Detection Colorbar Container */
+.td-colorbar-container {
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 8px;
+    border: 1px solid #e8eaed;
+}
+
+.td-colorbar-container .colorbar-track {
+    height: 16px;
+}
+
+.td-colorbar-container .colorbar-values {
+    margin-top: 6px;
+}
+
+/* Try Another Model Button */
+.td-btn-secondary {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #666;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.td-btn-secondary:hover {
+    background: #e0e0e0;
+    color: #333;
+}
+
+/* Target Detection Track */
+.colorbar-track.td-track {
+    height: 16px;
+}
+
+.colorbar-gradient.td-gradient {
+    background: linear-gradient(to right, 
+        #000080, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000, #800000);
+}
+
 /* Target Detection Marker Number Label */
 .td-marker-number {
     background: transparent !important;
     border: none !important;
 }
 
-/* Band Selection Panel */
+/* TD Row - Setup controls */
 .td-row {
     display: flex;
     gap: 6px;
     align-items: center;
-    flex-wrap: wrap;
+    width: 100%;
+    box-sizing: border-box;
 }
+
+.td-row select {
+    flex: 1;
+    min-width: 60px;
+    max-width: 100px;
+}
+
+.td-row .td-btn {
+    flex-shrink: 0;
+    padding: 6px 8px;
+    font-size: 11px;
+}
+
+/* Band Selection Panel */
 
 .td-bands-panel {
     padding: 10px;
@@ -4250,75 +4508,210 @@ body {
     box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
-/* Threshold Controls (for index results) */
-.threshold-controls {
-    margin-top: 12px;
-    padding: 12px;
-    background: #f5f5f5;
-    border-radius: 8px;
-}
-
-.threshold-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-}
-
-.threshold-header span {
-    font-weight: 600;
-    font-size: 13px;
-}
-
-.btn-close-threshold {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: #666;
-    padding: 4px;
-    font-size: 12px;
-}
-
-.threshold-inputs {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.threshold-input-group {
-    flex: 1;
-}
-
-.threshold-input-group label {
-    display: block;
-    font-size: 11px;
-    color: #666;
-    margin-bottom: 4px;
-}
-
-.threshold-input-group input[type="number"] {
+/* Threshold Inline Controls - unified style */
+.threshold-inline {
+    margin-top: 8px;
     width: 100%;
-    padding: 6px 8px;
+    box-sizing: border-box;
+}
+
+/* Colormap-based Threshold Slider */
+.threshold-colormap-slider {
+    position: relative;
+    margin-bottom: 8px;
+}
+
+.threshold-colormap-track {
+    position: relative;
+    height: 20px;
+    border-radius: 4px;
+    border: 1px solid #dadce0;
+    overflow: visible;
+}
+
+.threshold-colormap-gradient {
+    width: 100%;
+    height: 100%;
+    border-radius: 3px;
+}
+
+/* Threshold handles on colormap */
+.threshold-handle {
+    position: absolute;
+    top: -4px;
+    width: 12px;
+    height: 28px;
+    cursor: ew-resize;
+    z-index: 10;
+    transform: translateX(-50%);
+}
+
+.threshold-handle::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 0;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #1a73e8;
+}
+
+.threshold-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 8px;
+    width: 3px;
+    height: 20px;
+    background: #1a73e8;
+    border-radius: 0 0 2px 2px;
+}
+
+.threshold-handle.min-handle::before {
+    border-top-color: #1a73e8;
+}
+
+.threshold-handle.max-handle::before {
+    border-top-color: #ea4335;
+}
+
+.threshold-handle.min-handle::after {
+    background: #1a73e8;
+}
+
+.threshold-handle.max-handle::after {
+    background: #ea4335;
+}
+
+/* Selection highlight between handles */
+.threshold-selection {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(26, 115, 232, 0.25);
+    pointer-events: none;
+    border-radius: 3px;
+}
+
+/* Value inputs row below colormap */
+.threshold-values-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.threshold-value-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.threshold-value-label {
+    font-size: 10px;
+    color: #666;
+    font-weight: 500;
+}
+
+.threshold-input {
+    width: 60px;
+    padding: 4px 6px;
     border: 1px solid #ddd;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11px;
+    font-family: monospace;
+    text-align: center;
+    background: white;
+}
+
+.threshold-input:focus {
+    outline: none;
+    border-color: #1a73e8;
+}
+
+.threshold-input.min-input {
+    border-color: #1a73e8;
+}
+
+.threshold-input.max-input {
+    border-color: #ea4335;
+}
+
+.threshold-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.threshold-btn-apply,
+.threshold-btn-cancel {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.threshold-btn-apply {
+    background: #1a73e8;
+    color: white;
+    border-color: #1a73e8;
+}
+
+.threshold-btn-apply:hover {
+    background: #1557b0;
+}
+
+.threshold-btn-cancel:hover {
+    background: #f0f0f0;
+}
+
+/* Legacy styles for backwards compatibility */
+.threshold-range-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.threshold-slider-wrapper {
+    flex: 1;
+    position: relative;
+    height: 20px;
 }
 
 .threshold-slider {
-    position: relative;
-    height: 30px;
-    margin-bottom: 12px;
-}
-
-.threshold-slider input[type="range"] {
     position: absolute;
     width: 100%;
+    height: 6px;
+    top: 50%;
+    transform: translateY(-50%);
     -webkit-appearance: none;
     background: transparent;
     pointer-events: none;
 }
 
-.threshold-slider input[type="range"]::-webkit-slider-thumb {
+.threshold-slider-wrapper::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 6px;
+    background: linear-gradient(to right, #34a853, #fbbc04, #ea4335);
+    border-radius: 3px;
+}
+
+.threshold-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 16px;
     height: 16px;
@@ -4326,12 +4719,19 @@ body {
     border-radius: 50%;
     cursor: pointer;
     pointer-events: all;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    border: 2px solid white;
 }
 
-.threshold-slider input[type="range"]::-webkit-slider-runnable-track {
-    height: 4px;
-    background: #ddd;
-    border-radius: 2px;
+.threshold-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: #1a73e8;
+    border-radius: 50%;
+    cursor: pointer;
+    pointer-events: all;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    border: 2px solid white;
 }
 
 .btn-apply-threshold {
@@ -4355,6 +4755,12 @@ body {
     font-weight: 600;
     color: #1a73e8;
     margin-bottom: 4px;
+}
+
+.pixel-value.pixel-value-text {
+    font-size: 12px;
+    font-weight: 500;
+    color: #666;
 }
 
 .pixel-coords {
@@ -4396,4 +4802,497 @@ body {
     background: #ff9800;
     color: white;
     border-color: #ff9800;
+}
+
+/* Threshold Actions */
+.threshold-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.threshold-actions .btn {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+
+.threshold-actions .btn-primary {
+    background: #4CAF50;
+    color: white;
+}
+
+.threshold-actions .btn-primary:hover {
+    background: #45a049;
+}
+
+.threshold-actions .btn-secondary {
+    background: #9e9e9e;
+    color: white;
+}
+
+.threshold-actions .btn-secondary:hover {
+    background: #757575;
+}
+
+/* Threshold range display */
+.threshold-range-display {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: #fff;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.threshold-range-label {
+    color: #666;
+}
+
+.threshold-range-value {
+    font-weight: 600;
+    color: #1a73e8;
+    font-family: 'Consolas', monospace;
+}
+
+/* Threshold slider container */
+.threshold-slider-container {
+    position: relative;
+    height: 24px;
+    margin-bottom: 12px;
+}
+
+.threshold-slider-container input[type="range"] {
+    position: absolute;
+    width: 100%;
+    height: 4px;
+    -webkit-appearance: none;
+    background: transparent;
+    pointer-events: none;
+}
+
+.threshold-slider-container input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #1a73e8;
+    border-radius: 50%;
+    cursor: pointer;
+    pointer-events: all;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.threshold-slider-container input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+    background: #ddd;
+    border-radius: 2px;
+}
+
+/* Apply and Restore buttons */
+.btn-apply-threshold,
+.btn-restore-colormap {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.btn-apply-threshold {
+    background: #4CAF50;
+    color: white;
+}
+
+.btn-apply-threshold:hover {
+    background: #45a049;
+}
+
+.btn-restore-colormap {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-restore-colormap:hover {
+    background: #5a6268;
+}
+
+/* Coordinate Search */
+.coordinate-search {
+    margin-bottom: 12px;
+}
+
+.coord-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.coord-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.coord-input:focus {
+    outline: none;
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.control-btn.small {
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+/* Coordinate marker */
+.coord-marker {
+    background: none;
+    border: none;
+}
+
+.coord-marker-inner {
+    font-size: 24px;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    animation: bounce 0.5s ease-out;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+/* Apply Visualization Button */
+.apply-vis-btn {
+    margin-top: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+/* ===== Band Drag & Drop UI ===== */
+.band-dnd-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.band-pool {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    background: white;
+    border-radius: 6px;
+    border: 1px dashed #ddd;
+    min-height: 36px;
+}
+
+.band-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 28px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 14px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: grab;
+    transition: all 0.2s;
+    user-select: none;
+}
+
+.band-chip:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+}
+
+.band-chip:active {
+    cursor: grabbing;
+}
+
+.band-chip.dragging {
+    opacity: 0.5;
+}
+
+.rgb-slots {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+}
+
+.rgb-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px;
+    border-radius: 8px;
+    min-width: 50px;
+    transition: all 0.2s;
+}
+
+.rgb-slot.r-slot {
+    background: rgba(231, 76, 60, 0.15);
+    border: 2px solid rgba(231, 76, 60, 0.3);
+}
+
+.rgb-slot.g-slot {
+    background: rgba(39, 174, 96, 0.15);
+    border: 2px solid rgba(39, 174, 96, 0.3);
+}
+
+.rgb-slot.b-slot {
+    background: rgba(52, 152, 219, 0.15);
+    border: 2px solid rgba(52, 152, 219, 0.3);
+}
+
+.rgb-slot.drag-over {
+    transform: scale(1.05);
+    box-shadow: 0 0 12px rgba(0,0,0,0.2);
+}
+
+.rgb-slot.r-slot.drag-over { border-color: #e74c3c; }
+.rgb-slot.g-slot.drag-over { border-color: #27ae60; }
+.rgb-slot.b-slot.drag-over { border-color: #3498db; }
+
+.slot-label {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.rgb-slot.r-slot .slot-label { color: #e74c3c; }
+.rgb-slot.g-slot .slot-label { color: #27ae60; }
+.rgb-slot.b-slot .slot-label { color: #3498db; }
+
+.slot-band {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 24px;
+    background: #495057;
+    color: white;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+/* ===== EMIT Band Selector Modal Styles ===== */
+.emit-band-selector-modal .modal-content {
+    max-width: 800px;
+    max-height: 90vh;
+}
+
+.emit-viz-type-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.emit-viz-type-btn {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.emit-viz-type-btn:hover {
+    background: #f5f5f5;
+}
+
+.emit-viz-type-btn.active {
+    background: #1a73e8;
+    color: white;
+    border-color: #1a73e8;
+}
+
+.emit-viz-type-content {
+    margin-bottom: 20px;
+}
+
+.rgb-band-selectors,
+.index-band-selectors {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.rgb-selector,
+.index-selector {
+    flex: 1;
+}
+
+.rgb-selector label,
+.index-selector label {
+    display: block;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.band-select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    background: white;
+}
+
+.band-select:focus {
+    outline: none;
+    border-color: #1a73e8;
+}
+
+/* Band List Section */
+.emit-band-list-section {
+    margin-top: 24px;
+    border-top: 1px solid #eee;
+    padding-top: 20px;
+}
+
+.band-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.band-list-header label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #333;
+}
+
+.band-search-input {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    width: 250px;
+}
+
+.band-search-input:focus {
+    outline: none;
+    border-color: #1a73e8;
+}
+
+.band-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fafafa;
+    padding: 8px;
+}
+
+.band-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.band-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.band-item:hover {
+    background: #f0f7ff;
+    border-color: #1a73e8;
+}
+
+.band-item input[type="checkbox"] {
+    cursor: pointer;
+    margin: 0;
+}
+
+.band-item label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex: 1;
+    cursor: pointer;
+    margin: 0;
+    font-size: 12px;
+}
+
+.band-name {
+    font-weight: 500;
+    color: #333;
+}
+
+.band-wavelength {
+    color: #666;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.band-list-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #666;
+}
+
+#emit-selected-count {
+    font-weight: 500;
+    color: #1a73e8;
+}
+
+/* Form group styling for EMIT modal */
+.emit-band-selector-content .form-group {
+    margin-bottom: 16px;
+}
+
+.emit-band-selector-content .form-group label {
+    display: block;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 6px;
+    font-weight: 500;
+}
+
+.emit-band-selector-content select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    background: white;
+}
+
+.emit-band-selector-content select:focus {
+    outline: none;
+    border-color: #1a73e8;
 }

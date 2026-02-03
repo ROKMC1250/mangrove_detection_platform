@@ -1,0 +1,25 @@
+# ============================================
+# Segmentation Model Configuration
+# 이 파일을 수정하여 모델 설정을 변경하세요
+# ============================================
+
+# 모델 디렉토리 경로 (학습된 모델이 있는 폴더)
+model_dir: "/home/hjh1037/Mangrove_segmentation/logs/segformer_MVI_v1"
+
+# 체크포인트 파일명 (last.pt 또는 best.pt)
+checkpoint: "last.pt"
+
+# GPU 설정 (비워두면 CPU 사용, "0"이면 첫번째 GPU)
+gpus: "0"
+
+# 예측 설정
+patch_size: 256      # 패치 크기 (보통 256)
+overlap: 0.5         # 오버랩 비율 (0.5 = 50% 오버랩, 높을수록 부드럽지만 느림)
+use_tta: false       # Test Time Augmentation (true면 더 정확하지만 4배 느림)
+
+# 기본 모델 파라미터 (config.yaml이 없을 때 사용)
+default_model:
+  name: "Segformer"           # 모델 종류: Segformer, UnetPlusPlus, MAnet, PAN, FPN, DPT, UperNet
+  encoder_name: "mit_b2"      # 인코더 백본
+  in_channels: 13             # 입력 채널 수 (Sentinel-2: 13밴드)
+  classes: 1                  # 출력 클래스 수 (이진 분류: 1)

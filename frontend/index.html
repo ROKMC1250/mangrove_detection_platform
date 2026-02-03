@@ -122,6 +122,18 @@
         <div class="panel-content">
             <!-- Search Tab Content -->
             <div id="search-tab-content" class="tab-content active">
+                <!-- Coordinate Search -->
+                <div class="control-group coordinate-search">
+                    <label>Go to Coordinates:</label>
+                    <div class="coord-input-row">
+                        <input type="text" id="coord-input" class="coord-input" 
+                               placeholder="lat, lng (e.g., 26.761, 103.794)">
+                        <button id="go-to-coords" class="control-btn primary small">
+                            🎯 Go
+                        </button>
+                    </div>
+                </div>
+                
                 <div class="control-group">
                     <label>Draw AOI on Map:</label>
                     <div class="draw-controls">
@@ -180,146 +192,80 @@
 
                 <!-- Sentinel-2 Channel Selection (shown by default) -->
                 <div id="s2-channel-options" class="control-group s2-options">
-                    <label>🎨 Optical Visualization (RGB):</label>
-                    <div class="channel-selectors">
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #e74c3c;">R:</span>
-                            <select id="s2-channel-r" class="channel-select">
-                                <option value="B4" selected>B4 (Red)</option>
-                                <option value="B3">B3 (Green)</option>
-                                <option value="B2">B2 (Blue)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                                <option value="B5">B5 (Red Edge 1)</option>
-                                <option value="B6">B6 (Red Edge 2)</option>
-                                <option value="B7">B7 (Red Edge 3)</option>
-                                <option value="B8A">B8A (NIR Narrow)</option>
-                            </select>
+                    <label>Drag bands to RGB:</label>
+                    <div class="band-dnd-container">
+                        <div class="band-pool" id="s2-band-pool">
+                            <div class="band-chip" draggable="true" data-band="B2">B2</div>
+                            <div class="band-chip" draggable="true" data-band="B3">B3</div>
+                            <div class="band-chip" draggable="true" data-band="B4">B4</div>
+                            <div class="band-chip" draggable="true" data-band="B5">B5</div>
+                            <div class="band-chip" draggable="true" data-band="B6">B6</div>
+                            <div class="band-chip" draggable="true" data-band="B7">B7</div>
+                            <div class="band-chip" draggable="true" data-band="B8">B8</div>
+                            <div class="band-chip" draggable="true" data-band="B8A">B8A</div>
+                            <div class="band-chip" draggable="true" data-band="B11">B11</div>
+                            <div class="band-chip" draggable="true" data-band="B12">B12</div>
                         </div>
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #27ae60;">G:</span>
-                            <select id="s2-channel-g" class="channel-select">
-                                <option value="B4">B4 (Red)</option>
-                                <option value="B3" selected>B3 (Green)</option>
-                                <option value="B2">B2 (Blue)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                                <option value="B5">B5 (Red Edge 1)</option>
-                                <option value="B6">B6 (Red Edge 2)</option>
-                                <option value="B7">B7 (Red Edge 3)</option>
-                                <option value="B8A">B8A (NIR Narrow)</option>
-                            </select>
-                        </div>
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #3498db;">B:</span>
-                            <select id="s2-channel-b" class="channel-select">
-                                <option value="B4">B4 (Red)</option>
-                                <option value="B3">B3 (Green)</option>
-                                <option value="B2" selected>B2 (Blue)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                                <option value="B5">B5 (Red Edge 1)</option>
-                                <option value="B6">B6 (Red Edge 2)</option>
-                                <option value="B7">B7 (Red Edge 3)</option>
-                                <option value="B8A">B8A (NIR Narrow)</option>
-                            </select>
+                        <div class="rgb-slots">
+                            <div class="rgb-slot r-slot" data-channel="R" id="s2-slot-r">
+                                <span class="slot-label">R</span>
+                                <span class="slot-band" data-band="B4">B4</span>
+                            </div>
+                            <div class="rgb-slot g-slot" data-channel="G" id="s2-slot-g">
+                                <span class="slot-label">G</span>
+                                <span class="slot-band" data-band="B3">B3</span>
+                            </div>
+                            <div class="rgb-slot b-slot" data-channel="B" id="s2-slot-b">
+                                <span class="slot-label">B</span>
+                                <span class="slot-band" data-band="B2">B2</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="s2-presets">
-                        <button class="preset-btn s2-preset active" data-preset="truecolor">True Color</button>
-                        <button class="preset-btn s2-preset" data-preset="falsecolor">False Color</button>
-                        <button class="preset-btn s2-preset" data-preset="agriculture">Agriculture</button>
-                        <button class="preset-btn s2-preset" data-preset="swir">SWIR</button>
-                    </div>
-                    <div class="param-row">
+                    <div class="param-row" style="margin-top: 8px;">
                         <label>Min:</label>
-                        <input type="number" id="s2-min" value="0" class="number-input" style="width: 60px;">
+                        <input type="number" id="s2-min" value="0" class="number-input" style="width: 55px;">
                         <label>Max:</label>
-                        <input type="number" id="s2-max" value="3000" class="number-input" style="width: 60px;">
+                        <input type="number" id="s2-max" value="3000" class="number-input" style="width: 55px;">
                     </div>
-                    <button id="apply-s2-vis-btn" class="control-btn primary" style="margin-top: 10px; width: 100%;">
-                        🔄 Apply Visualization
-                    </button>
+                    <button id="apply-s2-vis" class="control-btn primary apply-vis-btn">Apply</button>
                 </div>
 
                 <!-- Sentinel-1 Channel Selection (hidden by default) -->
                 <div id="s1-channel-options" class="control-group s1-options hidden">
-                    <label>SAR Visualization (RGB):</label>
-                    <div class="channel-selectors">
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #e74c3c;">R:</span>
-                            <select id="s1-channel-r" class="channel-select">
-                                <option value="VV" selected>VV (dB)</option>
-                                <option value="VH">VH (dB)</option>
-                                <option value="angle">Angle</option>
-                            </select>
+                    <label>Drag bands to RGB:</label>
+                    <div class="band-dnd-container">
+                        <div class="band-pool" id="s1-band-pool">
+                            <div class="band-chip" draggable="true" data-band="VV">VV</div>
+                            <div class="band-chip" draggable="true" data-band="VH">VH</div>
                         </div>
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #27ae60;">G:</span>
-                            <select id="s1-channel-g" class="channel-select">
-                                <option value="VV">VV (dB)</option>
-                                <option value="VH" selected>VH (dB)</option>
-                                <option value="angle">Angle</option>
-                            </select>
-                        </div>
-                        <div class="channel-row">
-                            <span class="channel-label" style="color: #3498db;">B:</span>
-                            <select id="s1-channel-b" class="channel-select">
-                                <option value="VV" selected>VV (dB)</option>
-                                <option value="VH">VH (dB)</option>
-                                <option value="angle">Angle</option>
-                            </select>
+                        <div class="rgb-slots">
+                            <div class="rgb-slot r-slot" data-channel="R" id="s1-slot-r">
+                                <span class="slot-label">R</span>
+                                <span class="slot-band" data-band="VV">VV</span>
+                            </div>
+                            <div class="rgb-slot g-slot" data-channel="G" id="s1-slot-g">
+                                <span class="slot-label">G</span>
+                                <span class="slot-band" data-band="VH">VH</span>
+                            </div>
+                            <div class="rgb-slot b-slot" data-channel="B" id="s1-slot-b">
+                                <span class="slot-label">B</span>
+                                <span class="slot-band" data-band="VV">VV</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="s1-presets">
-                        <button class="preset-btn" data-preset="vv">VV only</button>
-                        <button class="preset-btn" data-preset="vh">VH only</button>
-                        <button class="preset-btn active" data-preset="vvvh">VV/VH/VV</button>
-                        <button class="preset-btn" data-preset="ratio">VH/VV Ratio</button>
+                    <div class="param-row" style="margin-top: 8px;">
+                        <label>Min:</label>
+                        <input type="number" id="s1-min" value="-25" class="number-input" style="width: 55px;">
+                        <label>Max:</label>
+                        <input type="number" id="s1-max" value="0" class="number-input" style="width: 55px;">
                     </div>
-                    <div class="param-row">
-                        <label>Min (dB):</label>
-                        <input type="number" id="s1-min" value="-25" class="number-input" style="width: 60px;">
-                        <label>Max (dB):</label>
-                        <input type="number" id="s1-max" value="0" class="number-input" style="width: 60px;">
-                    </div>
-                    <button id="apply-s1-vis-btn" class="control-btn primary" style="margin-top: 10px; width: 100%;">
-                        🔄 Apply Visualization
-                    </button>
+                    <button id="apply-s1-vis" class="control-btn primary apply-vis-btn">Apply</button>
                 </div>
 
                 <div class="control-group">
                     <button id="search-btn" class="control-btn primary large" disabled>
                         🔍 Search Satellite Images
                     </button>
-                </div>
-
-                <!-- Compare Mode Section -->
-                <div id="compare-section" class="control-group compare-section hidden">
-                    <label>🔀 Compare S1 & S2:</label>
-                    <div class="compare-controls">
-                        <div class="compare-select-row">
-                            <span>Left (S2):</span>
-                            <select id="compare-s2-select" class="compare-select">
-                                <option value="">-- Select S2 Image --</option>
-                            </select>
-                        </div>
-                        <div class="compare-select-row">
-                            <span>Right (S1):</span>
-                            <select id="compare-s1-select" class="compare-select">
-                                <option value="">-- Select S1 Image --</option>
-                            </select>
-                        </div>
-                        <button id="compare-btn" class="control-btn primary" disabled>
-                            👁️ Visualize Both
-                        </button>
-                        <button id="compare-exit-btn" class="control-btn secondary hidden">
-                            ✕ Exit Compare
-                        </button>
-                    </div>
                 </div>
 
                 <!-- Inline Search Results - S2 -->
@@ -499,12 +445,11 @@
     <div id="loading-overlay" class="loading-overlay hidden">
         <div class="loading-content">
             <div class="loading-spinner"></div>
-            <h3>Processing...</h3>
-            <p id="loading-message">Please wait while we process your request</p>
+            <h3 id="loading-title">Processing...</h3>
             <div class="progress">
                 <div id="loading-progress-bar" class="progress-bar"></div>
             </div>
-            <div id="loading-progress-text" class="progress-text">0%</div>
+            <button id="loading-cancel-btn" class="loading-cancel-btn">Cancel</button>
         </div>
     </div>
 
@@ -639,16 +584,24 @@
     })();
     </script>
 
-    <!-- Custom JavaScript Modules -->
+    <!-- Map Modules (load before map.js facade) -->
+    <script src="/static/js/map-core.js"></script>
+    <script src="/static/js/map-drawing.js"></script>
+    <script src="/static/js/map-layers.js"></script>
+    <script src="/static/js/map-file-loader.js"></script>
+    <script src="/static/map.js"></script>
+
+    <!-- Platform Modules -->
     <script src="/static/js/api-client.js"></script>
-    <script src="/static/js/ui-components.js"></script>
+    <script src="/static/js/ui-manager.js"></script>
+    <script src="/static/js/search-results.js"></script>
+    <script src="/static/js/image-processor.js"></script>
     <script src="/static/js/image-search.js"></script>
     <script src="/static/js/analysis-controller.js"></script>
     <script src="/static/js/change-monitoring.js"></script>
     <script src="/static/js/custom-visualization.js"></script>
     <script src="/static/js/threshold-controller.js"></script>
     <script src="/static/js/target-detection.js"></script>
-    <script src="/static/map.js"></script>
     <script src="/static/script.js"></script>
 
     <script>

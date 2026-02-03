@@ -204,14 +204,51 @@ class CEMDetector(BaseDetector):
 
 
 # =============================================================================
+# MF Detector (Matched Filter)
+# =============================================================================
+
+class MFDetector(BaseDetector):
+    """Matched Filter detector - optimal linear filter for known target signature."""
+    
+    def __init__(self):
+        super().__init__(name="MF")
+    
+    def detect(self, image_data: np.ndarray, target_spectrum: np.ndarray) -> np.ndarray:
+        height, width, n_bands = image_data.shape
+        pixels = image_data.reshape(-1, n_bands)
+        
+        if not self._is_fitted:
+            self.fit_background(pixels)
+        
+        # Center the target spectrum
+        target_centered = target_spectrum - self._background_mean
+        
+        # Compute the matched filter weights
+        # MF = (C^-1 * t) / (t' * C^-1 * t)
+        Ct = self._background_cov_inv @ target_centered
+        tCt = max(target_centered @ Ct, 1e-10)
+        mf_weights = Ct / tCt
+        
+        # Apply matched filter to all pixels (centered)
+        pixels_centered = pixels - self._background_mean
+        mf_scores = pixels_centered @ mf_weights
+        
+        return mf_scores.reshape(height, width)
+    
+    @property
+    def description(self) -> str:
+        return "Matched Filter - optimal linear filter for target detection"
+
+
+# =============================================================================
 # Detector Factory
 # =============================================================================
 
 DETECTORS = {
     'SAM': SAMDetector,
     'ACE': ACEDetector,
-    'RXD': RXDDetector,
-    'CEM': CEMDetector
+    'CEM': CEMDetector,
+    'MF': MFDetector
 }
 
 

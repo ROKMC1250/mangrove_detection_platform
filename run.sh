@@ -57,21 +57,153 @@ echo "📍 Server will be accessible at:"
 echo "   - Local:   http://localhost:8000"
 echo "   - Local:   http://127.0.0.1:8000"
 
-# Get all network interfaces
-if command -v hostname &> /dev/null; then
-    LOCAL_IP=$(hostname -I | awk '{print $1}')
-    if [ -n "$LOCAL_IP" ]; then
-        echo "   - Network: http://$LOCAL_IP:8000"
+# Function to get local network IPs excluding VPN interfaces
+get_local_ips() {
+    local ips_seen=""
+    
+    # Method 1: Get IPs from physical interfaces (exclude VPN interfaces: wg*, tun*, vpn*)
+    if command -v ip &> /dev/null; then
+        # Get all network interfaces, exclude VPN interfaces
+        for iface in $(ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print $2}' | grep -vE '^(lo|wg|tun|vpn)' | head -10); do
+            ip_addr=$(ip -4 addr show "$iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1)
+            if [ -n "$ip_addr" ] && [ "$ip_addr" != "127.0.0.1" ]; then
+                # Avoid duplicates
+                if [[ ! " $ips_seen " =~ " $ip_addr " ]]; then
+                    echo "   - Network: http://$ip_addr:8000 ($iface)"
+                    ips_seen="$ips_seen $ip_addr"
+                fi
+            fi
+        done
     fi
-fi
+    
+    # Method 2: Fallback - get IP from default route (excluding VPN)
+    if [ -z "$ips_seen" ] && command -v ip &> /dev/null; then
+        # Try to get IP from default route, but check if it's not on a VPN interface
+        default_route=$(ip route get 8.8.8.8 2>/dev/null)
+        if [ -n "$default_route" ]; then
+            default_ip=$(echo "$default_route" | grep -oP 'src \K[\d.]+' || echo "")
+            default_iface=$(echo "$default_route" | grep -oP 'dev \K\S+' || echo "")
+            
+            # Only use if it's not a VPN interface
+            if [ -n "$default_ip" ] && [ -n "$default_iface" ] && [[ ! "$default_iface" =~ ^(wg|tun|vpn) ]]; then
+                if [[ ! " $ips_seen " =~ " $default_ip " ]]; then
+                    echo "   - Network: http://$default_ip:8000 ($default_iface)"
+                    ips_seen="$ips_seen $default_ip"
+                fi
+            fi
+        fi
+    fi
+    
+    # Method 3: Last resort - use hostname -I but try to filter VPN IPs
+    if [ -z "$ips_seen" ] && command -v hostname &> /dev/null; then
+        for ip in $(hostname -I 2>/dev/null); do
+            if [[ ! "$ip" =~ ^127\. ]]; then
+                # Check which interface this IP belongs to
+                iface=$(ip -4 addr | grep "$ip" | awk '{print $NF}' | head -1)
+                if [ -n "$iface" ] && [[ ! "$iface" =~ ^(wg|tun|vpn|lo) ]]; then
+                    if [[ ! " $ips_seen " =~ " $ip " ]]; then
+                        echo "   - Network: http://$ip:8000 ($iface)"
+                        ips_seen="$ips_seen $ip"
+                    fi
+                fi
+            fi
+        done
+    fi
+}
 
-# Alternative method to get IP
-if command -v ip &> /dev/null; then
-    IP_ADDR=$(ip route get 1 2>/dev/null | grep -Po '(?<=src )[\d.]+' || echo "")
-    if [ -n "$IP_ADDR" ] && [ "$IP_ADDR" != "$LOCAL_IP" ]; then
-        echo "   - Network: http://$IP_ADDR:8000"
+# Display local network IPs
+get_local_ips
+
+# Check and fix local network routing when VPN is active
+fix_local_network_routing() {
+    # Check if WireGuard/VPN interface is active
+    local vpn_iface=""
+    if command -v ip &> /dev/null; then
+        vpn_iface=$(ip link show type wireguard 2>/dev/null | head -1 | awk -F': ' '{print $2}' | awk '{print $1}')
     fi
-fi
+    
+    if [ -z "$vpn_iface" ]; then
+        # Check for common VPN interface names
+        for iface in $(ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print $2}' | grep -E '^(wg|tun|vpn|myvpn)'); do
+            if ip link show "$iface" 2>/dev/null | grep -q "state UP"; then
+                vpn_iface="$iface"
+                break
+            fi
+        done
+    fi
+    
+    if [ -n "$vpn_iface" ]; then
+        echo ""
+        echo "🔒 VPN detected: $vpn_iface"
+        
+        # Get local network routes from physical interfaces
+        local routes_fixed=0
+        
+        # Check each physical interface
+        for iface in $(ip link show | grep -E '^[0-9]+:' | awk -F': ' '{print $2}' | grep -vE '^(lo|wg|tun|vpn|myvpn|docker)'); do
+            # Get IP and subnet for this interface
+            ip_info=$(ip -4 addr show "$iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | head -1)
+            
+            if [ -n "$ip_info" ]; then
+                ip_addr=$(echo "$ip_info" | cut -d'/' -f1)
+                subnet=$(echo "$ip_info" | cut -d'/' -f2)
+                
+                if [ -n "$subnet" ] && [ "$subnet" != "$ip_info" ]; then
+                    # Calculate network address (simple calculation for common subnets)
+                    IFS='.' read -r i1 i2 i3 i4 <<< "$ip_addr"
+                    case "$subnet" in
+                        24) net_addr="$i1.$i2.$i3.0/24" ;;
+                        16) net_addr="$i1.$i2.0.0/16" ;;
+                        8)  net_addr="$i1.0.0.0/8" ;;
+                        *)  net_addr="$i1.$i2.$i3.0/$subnet" ;;
+                    esac
+                    
+                    # Check if route exists and goes through correct interface
+                    existing_route=$(ip route show "$net_addr" 2>/dev/null | grep "dev $iface")
+                    
+                    if [ -z "$existing_route" ]; then
+                        # Check if traffic to local network would go through VPN
+                        test_ip="$i1.$i2.$i3.1"
+                        route_info=$(ip route get "$test_ip" 2>/dev/null)
+                        route_dev=$(echo "$route_info" | grep -oP 'dev \K\S+' | head -1 || echo "")
+                        
+                        if [ "$route_dev" = "$vpn_iface" ]; then
+                            echo "⚠️  Local network $net_addr ($iface) routed through VPN"
+                            echo "   Adding explicit route..."
+                            
+                            # Try to add route (with or without sudo)
+                            if command -v sudo &> /dev/null && sudo -n true 2>/dev/null; then
+                                # Sudo available and passwordless
+                                if sudo ip route add "$net_addr" dev "$iface" 2>/dev/null; then
+                                    echo "✅ Fixed: $net_addr via $iface"
+                                    routes_fixed=$((routes_fixed + 1))
+                                fi
+                            elif [ "$EUID" -eq 0 ]; then
+                                # Running as root
+                                if ip route add "$net_addr" dev "$iface" 2>/dev/null; then
+                                    echo "✅ Fixed: $net_addr via $iface"
+                                    routes_fixed=$((routes_fixed + 1))
+                                fi
+                            else
+                                echo "⚠️  Need sudo to fix routing. Run manually:"
+                                echo "   sudo ip route add $net_addr dev $iface"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        done
+        
+        if [ $routes_fixed -eq 0 ]; then
+            echo "✅ Local network routing appears correct"
+            echo "ℹ️  If local access still fails, configure WireGuard to exclude local networks:"
+            echo "   Edit WireGuard config and modify AllowedIPs to exclude local subnets"
+        fi
+    fi
+}
+
+# Fix local network routing if VPN is active
+fix_local_network_routing
 
 echo ""
 echo "📂 Frontend is served from /static/"
