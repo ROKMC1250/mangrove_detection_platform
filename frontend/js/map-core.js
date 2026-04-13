@@ -72,7 +72,9 @@ class MapCore {
             minZoom: 3,
             maxZoom: 18,
             zoomControl: true,
-            attributionControl: true
+            attributionControl: true,
+            maxBounds: [[-90, -180], [90, 180]],
+            maxBoundsViscosity: 1.0
         });
 
         // Store reference in manager
@@ -165,6 +167,39 @@ class MapCore {
         this.manager.osmLayer = this.osmLayer;
         this.manager.satelliteLayer = this.satelliteLayer;
         this.manager.labelsLayer = this.labelsLayer;
+    }
+
+    /**
+     * Create a clone of the base layer for use in a secondary map (e.g., compare mode)
+     * @param {string} type - 'osm' or 'satellite'
+     * @returns {{ base: L.TileLayer, labels: L.TileLayer|null }}
+     */
+    createBaseLayerClone(type) {
+        if (type === 'satellite') {
+            const base = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: '© Esri, Maxar, Earthstar Geographics',
+                maxZoom: 18,
+                maxNativeZoom: 18,
+                pane: 'basemapPane'
+            });
+            const labels = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap contributors, © CARTO',
+                maxZoom: 18,
+                maxNativeZoom: 18,
+                subdomains: 'abcd',
+                pane: 'labelsPane'
+            });
+            return { base, labels };
+        }
+        // Default: OSM
+        const base = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors, © CARTO',
+            maxZoom: 18,
+            maxNativeZoom: 18,
+            subdomains: 'abcd',
+            pane: 'basemapPane'
+        });
+        return { base, labels: null };
     }
 
     addCoordinateDisplay() {
@@ -304,7 +339,8 @@ class MapCore {
         this.manager.baseLayer = this.osmLayer;
         this.currentBaseLayerType = 'osm';
         this.manager.currentBaseLayerType = 'osm';
-        
+
+        window.dispatchEvent(new CustomEvent('baselayer:changed', { detail: { type: 'osm' }}));
         console.log('✅ Switched to OSM layer');
         this.debugLayerState();
         
@@ -335,7 +371,8 @@ class MapCore {
         this.manager.baseLayer = this.satelliteLayer;
         this.currentBaseLayerType = 'satellite';
         this.manager.currentBaseLayerType = 'satellite';
-        
+
+        window.dispatchEvent(new CustomEvent('baselayer:changed', { detail: { type: 'satellite' }}));
         console.log('✅ Switched to Satellite layer with English labels and borders');
         
         this.bringDataLayersToFront();

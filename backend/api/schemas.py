@@ -125,8 +125,9 @@ class TargetDetectionRequest(BaseModel):
     image_id: str
     bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
     geometry: Optional[Dict] = None
-    target_points: List[TargetPoint] = Field(..., description="List of target point coordinates")
-    algorithm: str = Field(default="SAM", description="Detection algorithm: SAM, ACE, RXD, CEM")
+    target_points: List[TargetPoint] = Field(..., description="List of positive target point coordinates")
+    negative_points: Optional[List[TargetPoint]] = Field(default=None, description="List of negative (non-target) point coordinates")
+    algorithm: str = Field(default="SAM", description="Detection algorithm: SAM, ACE, RXD, CEM, MF, MLP_AMF, MLP_ACE")
     threshold_percentile: Optional[float] = Field(default=95.0, description="Percentile for auto-threshold")
     auto_threshold: Optional[bool] = Field(default=True, description="Automatically find optimal threshold")
     selected_bands: Optional[List[int]] = Field(default=None, description="List of band indices to use (0-based). None means all bands.")
@@ -144,6 +145,68 @@ class TargetSpectrumRequest(BaseModel):
     bbox: List[float]
     lat: float
     lng: float
+
+
+# =============================================================================
+# Mangrove Segmentation Schemas
+# =============================================================================
+
+class MangroveSegmentationRequest(BaseModel):
+    image_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    geometry: Optional[Dict] = None
+    use_tta: Optional[bool] = Field(default=False, description="Use Test Time Augmentation (more accurate but 4x slower)")
+
+
+class MangroveSegmentationThresholdRequest(BaseModel):
+    segmentation_id: str
+    min_threshold: float
+    max_threshold: float
+    bbox: List[float]
+
+
+class ComputeSpectralIndexRequest(BaseModel):
+    image_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    geometry: Optional[Dict] = None
+    index_type: str = Field(..., description="Index type: ndvi, mvi, ndmi, ndwi, savi, evi, custom")
+    band_a: Optional[str] = Field(default=None, description="Band A for custom index")
+    band_b: Optional[str] = Field(default=None, description="Band B for custom index")
+    colormap: Optional[str] = Field(default=None, description="Colormap name override")
+
+
+# =============================================================================
+# SAM2 Segmentation Schemas
+# =============================================================================
+
+class SAM2EncodeRequest(BaseModel):
+    image_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    geometry: Optional[Dict] = None
+
+
+class SAM2PredictRequest(BaseModel):
+    image_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    positive_points: List[TargetPoint] = Field(..., description="Positive point prompts (lat/lng)")
+    negative_points: Optional[List[TargetPoint]] = Field(default=None, description="Negative point prompts (lat/lng)")
+    geometry: Optional[Dict] = None
+
+
+class SAM2SaveMaskRequest(BaseModel):
+    mask_id: str
+
+
+class PixelPoint(BaseModel):
+    row: int
+    col: int
+
+
+class UploadedSAM2PredictRequest(BaseModel):
+    upload_id: str
+    positive_points: List[PixelPoint] = Field(..., description="Positive points in pixel coords (row/col)")
+    negative_points: Optional[List[PixelPoint]] = Field(default=None, description="Negative points in pixel coords")
+    rgb_bands: Optional[List[int]] = Field(default=None, description="RGB band indices (1-based). e.g. [3,2,1]")
 
 
 class ProcessEmitImageRequest(BaseModel):

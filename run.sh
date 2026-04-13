@@ -1,21 +1,39 @@
 #!/usr/bin/bash
 set -euo pipefail
 
-# Create venv if it doesn't exist
-if [ ! -d "venv" ]; then
-	echo "📦 Creating virtual environment..."
-	python3 -m venv venv
-fi
-
-# Activate venv
-# shellcheck disable=SC1091
-source venv/bin/activate
-
-export PYTHONUNBUFFERED=1
-
 # Set project root (adjust if needed)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
+
+export PYTHONUNBUFFERED=1
+
+# Kill any existing uvicorn on port 8000
+if lsof -ti:8000 &>/dev/null; then
+    echo "⚠️  Port 8000 in use — killing existing process..."
+    kill -9 $(lsof -ti:8000) 2>/dev/null
+    sleep 1
+fi
+
+# --- Python environment setup via uv ---
+PYTHON_VERSION="3.11"
+
+# Check if uv is available
+if ! command -v uv &> /dev/null; then
+    echo "📦 Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# Create venv if it doesn't exist (uv auto-installs Python if needed)
+if [ ! -d "venv" ]; then
+    echo "📦 Creating virtual environment (Python ${PYTHON_VERSION})..."
+    uv venv --python "$PYTHON_VERSION" venv
+fi
+
+# Activate venv — use explicit VIRTUAL_ENV to avoid stale activate scripts
+export VIRTUAL_ENV="$PROJECT_ROOT/venv"
+export PATH="$VIRTUAL_ENV/bin:$PATH"
+unset PYTHONHOME
 
 # Set Earth Engine credentials (adjust paths if needed)
 if [ -z "${EE_SERVICE_ACCOUNT_KEY:-}" ]; then
@@ -46,7 +64,7 @@ fi
 # export MODEL1_LOG_DIR=/path/to/your/model/logs
 # export MODEL_ROOT=/path/to/your/model/root
 
-python -m pip install -r backend/requirements.txt
+uv pip install --python "$VIRTUAL_ENV/bin/python" -r backend/requirements.txt
 
 # Get IP addresses
 echo "======================================"
@@ -210,4 +228,4 @@ echo "📂 Frontend is served from /static/"
 echo "======================================"
 echo ""
 
-exec uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload 
+exec "$VIRTUAL_ENV/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload 

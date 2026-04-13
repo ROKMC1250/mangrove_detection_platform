@@ -26,16 +26,22 @@ from ..core.config import (
 )
 from ..utils.cache import cache_index_data
 
-# Try to import torch and model dependencies
+# Try to import torch
 try:
     import torch
     import yaml
-    from model.smp_models import create_model
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None
     yaml = None
+
+# Try to import segmentation model (separate from torch availability)
+try:
+    from model.smp_models import create_model
+    SMP_MODEL_AVAILABLE = True
+except ImportError:
+    SMP_MODEL_AVAILABLE = False
     create_model = None
 
 
@@ -130,6 +136,12 @@ def init_model1() -> bool:
         
         if not TORCH_AVAILABLE:
             _MODEL1_ERROR = "PyTorch not available - segmentation model will be disabled"
+            print(f"⚠️  MODEL - {_MODEL1_ERROR}")
+            print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
+            return False
+
+        if not SMP_MODEL_AVAILABLE:
+            _MODEL1_ERROR = "Segmentation model package (model.smp_models) not available"
             print(f"⚠️  MODEL - {_MODEL1_ERROR}")
             print("   Note: Other features (NDVI, NDMI, MVI, etc.) will still work.")
             return False
@@ -331,129 +343,57 @@ def _predict_large_image_mask(model, image_path: str, patch_size: int,
     
     # Crop back to original size
     final = avg[:, :, :height, :width]
-    mask = (final > 0.5).squeeze().detach().cpu().numpy().astype(np.uint8)
-    
-    # Debug: log prediction statistics
-    prob_np = final.squeeze().detach().cpu().numpy()
+    # Return probability map (float32, 0-1) instead of binary mask
+    prob_np = final.squeeze().detach().cpu().numpy().astype(np.float32)
     print(f"MODEL - Prediction stats: min={prob_np.min():.4f}, max={prob_np.max():.4f}, mean={prob_np.mean():.4f}")
-    print(f"MODEL - Mask stats: total={mask.size}, positive={mask.sum()}, ratio={100*mask.sum()/mask.size:.2f}%")
-    
-    return mask, profile
+
+    return prob_np, profile
 
 
 def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
                           geometry: Optional[Dict] = None,
-                          use_tta: Optional[bool] = None) -> Tuple[Optional[bytes], Optional[str], Optional[Dict]]:
-    """Run segmentation model inference on an image.
-    
-    Args:
-        image_path: Path to input raster file
-        bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
-        image_id: Image identifier for caching
-        geometry: Optional GeoJSON geometry for masking
-        use_tta: Use Test Time Augmentation for better results (slower)
-        
-    Returns:
-        Tuple of (preview_bytes, overlay_path, overlay_meta) or (None, None, None) on failure
+                          use_tta: Optional[bool] = None) -> Optional[Dict]:
+    """Run segmentation model inference and return probability map data.
+
+    Returns dict with prob_map, transform, crs, bbox, min_val, max_val, or None on failure.
     """
-    from .visualization import (
-        stretch_uint8, 
-        warp_rgb_and_mask_to_aoi, 
-        save_rgba_overlay_png_with_transparency,
-        generate_overlay_path,
-    )
-    
     if not _MODEL1_READY:
         if not init_model1():
-            return None, None, None
-    
+            return None
+
     if not _MODEL1_READY or _MODEL1 is None or _MODEL1_DEVICE is None:
         print(f"MODEL - not ready: {_MODEL1_ERROR}")
-        return None, None, None
-    
+        return None
+
     try:
-        # Get expected channels from config
-        expected_channels = 13  # Default
+        expected_channels = 13
         if _MODEL1_CFG:
             expected_channels = int(_MODEL1_CFG['model']['args'].get('in_channels', 13))
-        
-        # Use config default for TTA if not explicitly specified
+
         actual_use_tta = use_tta if use_tta is not None else MODEL1_USE_TTA
-        
+
         print(f"MODEL - Running inference on {image_path}")
         print(f"  patch_size={MODEL1_PATCH_SIZE}, overlap={MODEL1_OVERLAP}, channels={expected_channels}, TTA={actual_use_tta}")
-        
-        # Run prediction with Gaussian blending
-        mask, profile = _predict_large_image_mask(
+
+        prob_map, profile = _predict_large_image_mask(
             _MODEL1, image_path, MODEL1_PATCH_SIZE, MODEL1_OVERLAP, _MODEL1_DEVICE,
             expected_channels=expected_channels, use_tta=actual_use_tta
         )
-        
-        # Read RGB bands for preview (B4=Red, B3=Green, B2=Blue)
-        # New band order: B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12
-        # So B4=band4, B3=band3, B2=band2
-        with rasterio.open(image_path) as src:
-            b4, b3, b2 = src.read(4), src.read(3), src.read(2)  # Red, Green, Blue
-            src_transform = src.transform
-            src_crs = src.crs
-        
-        # Create preview overlay
-        base = np.dstack([stretch_uint8(b4), stretch_uint8(b3), stretch_uint8(b2)])
-        overlay = np.zeros_like(base, dtype=np.uint8)
-        overlay[..., 0] = 255  # Red channel
-        
-        alpha = 0.4
-        m = (mask > 0)
-        comp = base.copy()
-        comp[m] = (base[m] * (1 - alpha) + overlay[m] * alpha).astype(np.uint8)
-        
-        # Create preview thumbnail
-        img = Image.fromarray(comp, mode='RGB')
-        img.thumbnail((512, 512), Image.LANCZOS)
-        buf = pyio.BytesIO()
-        img.save(buf, format='PNG')
-        preview = buf.getvalue()
-        
-        # Cache mask data for pixel value computation
-        cache_index_data(image_id, 'model1', mask.astype(np.float32), 
-                        src_transform, src_crs, bbox)
-        
-        # Create AOI-aligned overlay
-        min_lon, min_lat, max_lon, max_lat = bbox
-        
-        overlay_rgb = np.zeros((profile['height'], profile['width'], 3), dtype=np.uint8)
-        overlay_rgb[mask == 1] = [255, 0, 0]  # Red for mangrove
-        
-        aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
-            overlay_rgb, mask, profile['transform'], profile['crs'],
-            (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=geometry
-        )
-        
-        aoi_rgb[~aoi_mask] = 0
-        
-        # Save overlay
-        overlay_png_path = generate_overlay_path("model1_overlay")
-        # Note: aoi_mask is already the reprojected mangrove mask from warp_rgb_and_mask_to_aoi
-        # Using >= 128 instead of == 255 because bilinear resampling can change exact values
-        is_mangrove = (aoi_rgb[:, :, 0] >= 128)
-        final_mask = is_mangrove & aoi_mask
-        
-        # Log mask statistics for debugging
-        print(f"MODEL - Mask stats: total={final_mask.size}, mangrove={final_mask.sum()}, ratio={100*final_mask.sum()/final_mask.size:.2f}%")
-        
-        save_rgba_overlay_png_with_transparency(aoi_rgb, final_mask, overlay_png_path)
-        
-        overlay_meta = {
-            'width': int(aoi_w),
-            'height': int(aoi_h),
-            'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
+
+        return {
+            'prob_map': prob_map,
+            'transform': profile['transform'],
+            'crs': profile['crs'],
+            'height': profile['height'],
+            'width': profile['width'],
+            'bbox': bbox,
+            'min_val': float(prob_map.min()),
+            'max_val': float(prob_map.max()),
         }
-        
-        return preview, overlay_png_path, overlay_meta
-        
+
     except Exception as e:
         print(f"MODEL - inference error: {e}")
         import traceback
         traceback.print_exc()
-        return None, None, None
+        return None
 

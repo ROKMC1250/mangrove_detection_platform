@@ -170,6 +170,9 @@ class UIManager {
                 button.classList.add('active');
                 document.getElementById(`${targetTab}-tab-content`).classList.add('active');
 
+                // Dispatch tab switch event for layer control panel
+                window.dispatchEvent(new CustomEvent('tab:switched', { detail: { tab: targetTab }}));
+
                 // Update button states when switching to Change Monitoring tab
                 if (targetTab === 'change-monitoring') {
                     const hasAOI = window.mapManager && window.mapManager.getCurrentBounds();
@@ -182,26 +185,68 @@ class UIManager {
         });
     }
 
-    switchToAnalysisTab() {
-        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    // ===== Right Panel =====
 
-        const analysisTab = document.querySelector('[data-tab="analysis"]');
-        if (analysisTab) {
-            analysisTab.classList.add('active');
-        }
-        const analysisContent = document.getElementById('analysis-tab-content');
-        if (analysisContent) {
-            analysisContent.classList.add('active');
+    setupRightPanelTabControls() {
+        const tabButtons = document.querySelectorAll('.right-tab-btn');
+        const tabContents = document.querySelectorAll('.right-tab-content');
+        tabButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const targetTab = button.getAttribute('data-right-tab');
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                tabContents.forEach(content => content.classList.remove('active'));
+                button.classList.add('active');
+                const el = document.getElementById(`right-${targetTab}-tab-content`);
+                if (el) el.classList.add('active');
+            });
+        });
+    }
+
+    showRightPanel() {
+        const panel = document.getElementById('right-panel');
+        if (panel) {
+            panel.style.display = 'flex';
+            panel.classList.remove('collapsed');
+            const toggleBtn = document.getElementById('right-panel-toggle-btn');
+            if (toggleBtn) toggleBtn.textContent = '▶';
+            setTimeout(() => {
+                if (window.mapManager?.map) window.mapManager.map.invalidateSize();
+            }, 350);
         }
     }
 
-    switchToChangeMonitoringTab() {
-        const changeMonitoringTab = document.getElementById('change-monitoring-tab');
-        if (changeMonitoringTab) {
-            changeMonitoringTab.classList.remove('hidden');
-            changeMonitoringTab.click();
+    hideRightPanel() {
+        const panel = document.getElementById('right-panel');
+        if (panel) {
+            panel.classList.add('collapsed');
+            const toggleBtn = document.getElementById('right-panel-toggle-btn');
+            if (toggleBtn) toggleBtn.textContent = '◀';
+            setTimeout(() => {
+                if (window.mapManager?.map) window.mapManager.map.invalidateSize();
+            }, 350);
         }
+    }
+
+    switchToAnalysisTab() {
+        this.showRightPanel();
+        const tabButtons = document.querySelectorAll('.right-tab-btn');
+        const tabContents = document.querySelectorAll('.right-tab-content');
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+
+        const analysisTab = document.querySelector('[data-right-tab="analysis"]');
+        if (analysisTab) analysisTab.classList.add('active');
+        const analysisContent = document.getElementById('right-analysis-tab-content');
+        if (analysisContent) analysisContent.classList.add('active');
+    }
+
+    switchToChangeMonitoringTab() {
+        // Change monitoring disabled
+        // const changeMonitoringTab = document.getElementById('change-monitoring-tab');
+        // if (changeMonitoringTab) {
+        //     changeMonitoringTab.classList.remove('hidden');
+        //     changeMonitoringTab.click();
+        // }
     }
 
     showNoAnalysisResults() {

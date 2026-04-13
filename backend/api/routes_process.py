@@ -40,21 +40,19 @@ from ..services.spectral_analysis import (
     get_band_data_from_raster,
     calculate_mangrove_area_km2,
 )
+from ..services.gpu_compute import load_image_to_gpu
 from ..services.visualization import (
     stretch_uint8,
-    create_index_visualization,
     save_rgba_overlay_png_with_transparency,
     warp_rgb_and_mask_to_aoi,
     to_png_bytes,
     generate_overlay_path,
 )
 from ..services.model_inference import (
-    run_model1_inference,
     is_model1_ready,
 )
 from ..utils.cache import (
     cache_raster_file,
-    cache_index_data,
     get_cached_raster_path,
     bbox_to_cache_key,
     RASTER_FILE_CACHE,
@@ -141,17 +139,17 @@ def _create_cloud_mask(image_path: str, bbox: List[float], item_id: str,
             (min_lon, min_lat, max_lon, max_lat), scale_m=10
         )
         
-        overlay_png_path = generate_overlay_path("cloud_mask_overlay")
-        save_rgba_overlay_png_with_transparency(cloud_aoi_rgb, cloud_aoi_mask, overlay_png_path)
-        
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+        overlay_b64 = rgb_mask_to_base64_gpu(cloud_aoi_rgb, cloud_aoi_mask)
+
         overlay_meta = {
             'width': int(aoi_w),
             'height': int(aoi_h),
             'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
         }
-        
-        print(f"CLOUD MASK - Created overlay at {overlay_png_path}")
-        return preview_bytes, overlay_png_path, overlay_meta
+
+        print(f"CLOUD MASK - Created overlay (base64, no file)")
+        return preview_bytes, overlay_b64, overlay_meta
         
     except Exception as e:
         print(f"CLOUD MASK - Error: {e}")
@@ -241,9 +239,9 @@ async def process_image(req: ProcessImageRequest):
         # Initialize progress tracking
         phases = [
             ("Initialization", 5.0),
-            ("Download", 35.0),
+            ("Download", 40.0),
             ("Model Inference", 30.0),
-            ("Index Calculation", 15.0),
+            ("GPU Loading", 10.0),
             ("Visualization", 10.0),
             ("Finalization", 5.0)
         ]
@@ -278,21 +276,15 @@ async def process_image(req: ProcessImageRequest):
         # Cache the raster file
         cache_raster_file(req.item_id, req.bbox, out_path)
         
-        # Model Inference phase
-        PROGRESS_TRACKER.start_phase(job_id, "Model Inference", total_steps=2)
+        # Model Inference phase (cloud mask only; mangrove segmentation runs on-demand)
+        PROGRESS_TRACKER.start_phase(job_id, "Model Inference", total_steps=1)
         PROGRESS_TRACKER.update_phase(job_id, "Model Inference", 0, 'Generating cloud mask', 0.1)
-        
+
         cloud_preview, cloud_overlay_png_path, cloud_overlay_meta = _create_cloud_mask(
             out_path, req.bbox, req.item_id, aoi_rect
         )
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Model Inference", 1, 'Running segmentation model', 0.5)
-        model1_preview, model1_overlay_png_path, model1_overlay_meta = run_model1_inference(
-            out_path, req.bbox, req.item_id, geometry=req.geometry
-        )
-        
-        PROGRESS_TRACKER.complete_phase(job_id, "Model Inference", 
-                                       'Models completed' if model1_preview else 'Segmentation model skipped')
+
+        PROGRESS_TRACKER.complete_phase(job_id, "Model Inference", 'Cloud mask completed')
         
         # Read raster data for analysis
         with rasterio.open(out_path) as ds:
@@ -303,90 +295,41 @@ async def process_image(req: ProcessImageRequest):
                 l, b, r, t = transform_bounds(ds.crs, 'EPSG:4326', *ds.bounds, densify_pts=21)
             else:
                 l, b, r, t = ds.bounds
-        
+
         # Band order: B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12, mask
         B1, B2, B3, B4, B5, B6, B7, B8, B8A, B9, B11, B12 = (
-            data[0], data[1], data[2], data[3], data[4], data[5], 
+            data[0], data[1], data[2], data[3], data[4], data[5],
             data[6], data[7], data[8], data[9], data[10], data[11]
         )
         MASK = data[12]
-        
-        # Index Calculation phase
-        PROGRESS_TRACKER.start_phase(job_id, "Index Calculation", total_steps=4)
-        
-        mask_bool = (MASK > 0)
-        
-        def apply_mask(arr):
-            res = arr.copy()
-            res[~mask_bool] = np.nan
-            return res
-        
-        B4_m, B8_m = apply_mask(B4), apply_mask(B8)
-        B3_m, B11_m, B12_m = apply_mask(B3), apply_mask(B11), apply_mask(B12)
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Index Calculation", 1, 'Computing NDVI')
-        ndvi = safe_divide(B8_m - B4_m, B8_m + B4_m)
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Index Calculation", 2, 'Computing NDMI')
-        ndmi = safe_divide(B12_m - B3_m, B12_m + B3_m)
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Index Calculation", 3, 'Computing MVI')
-        mvi = safe_divide(B8_m - B3_m, B11_m - B3_m)
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Index Calculation", 4, 'Caching index data')
-        
-        # Cache index data
-        cache_index_data(req.item_id, 'model2', ndvi, src_transform, src_crs, req.bbox)
-        cache_index_data(req.item_id, 'model3', ndmi, src_transform, src_crs, req.bbox)
-        cache_index_data(req.item_id, 'model4', mvi, src_transform, src_crs, req.bbox)
-        
-        PROGRESS_TRACKER.complete_phase(job_id, "Index Calculation", 'Spectral indices computed')
-        
+
+        # GPU Loading phase — load all bands to GPU for on-demand analysis
+        PROGRESS_TRACKER.start_phase(job_id, "GPU Loading", total_steps=2)
+        PROGRESS_TRACKER.update_phase(job_id, "GPU Loading", 1, 'Loading bands to GPU')
+
+        gpu_cache_key = bbox_to_cache_key(req.item_id, req.bbox)
+        band_arrays = [data[i] for i in range(12)]  # B1-B12 (exclude mask)
+        load_image_to_gpu(gpu_cache_key, band_arrays)
+
+        PROGRESS_TRACKER.update_phase(job_id, "GPU Loading", 2, 'GPU loading complete')
+        PROGRESS_TRACKER.complete_phase(job_id, "GPU Loading", 'All bands loaded to GPU')
+
         # AlphaEarth processing
         alphaearth_pca_rgb, alphaearth_meta = _download_and_process_alphaearth(
             req.item_id, req.bbox, aoi_rect, src_transform, src_crs
         )
         
         # Visualization phase
-        PROGRESS_TRACKER.start_phase(job_id, "Visualization", total_steps=4)
-        PROGRESS_TRACKER.update_phase(job_id, "Visualization", 1, 'Creating index visualizations')
-        
-        ndvi_rgb, ndvi_min, ndvi_max = create_index_visualization(ndvi, 'RdYlGn', vmin=-1, vmax=1)
-        ndmi_rgb, ndmi_min, ndmi_max = create_index_visualization(ndmi, 'RdYlGn', vmin=-1, vmax=1)
-        mvi_rgb, mvi_min, mvi_max = create_index_visualization(mvi, 'viridis')
-        
-        PROGRESS_TRACKER.update_phase(job_id, "Visualization", 2, 'Aligning overlays to AOI')
-        
+        PROGRESS_TRACKER.start_phase(job_id, "Visualization", total_steps=3)
+        PROGRESS_TRACKER.update_phase(job_id, "Visualization", 1, 'Aligning overlays to AOI')
+
         min_lon, min_lat, max_lon, max_lat = req.bbox
-        
-        valid_ndvi = np.isfinite(ndvi) & mask_bool
-        valid_ndmi = np.isfinite(ndmi) & mask_bool
-        valid_mvi = np.isfinite(mvi) & mask_bool
-        
-        ndvi_aoi_rgb, ndvi_aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
-            ndvi_rgb, valid_ndvi, src_transform, src_crs,
-            (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
-        )
-        ndmi_aoi_rgb, ndmi_aoi_mask, _, _ = warp_rgb_and_mask_to_aoi(
-            ndmi_rgb, valid_ndmi, src_transform, src_crs,
-            (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
-        )
-        mvi_aoi_rgb, mvi_aoi_mask, _, _ = warp_rgb_and_mask_to_aoi(
-            mvi_rgb, valid_mvi, src_transform, src_crs,
-            (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
-        )
-        
-        # Save overlay PNGs
-        ndvi_png_aoi = generate_overlay_path("model2_ndvi_overlay")
-        ndmi_png_aoi = generate_overlay_path("model3_ndmi_overlay")
-        mvi_png_aoi = generate_overlay_path("model4_mvi_overlay")
-        
-        save_rgba_overlay_png_with_transparency(ndvi_aoi_rgb, ndvi_aoi_mask, ndvi_png_aoi)
-        save_rgba_overlay_png_with_transparency(ndmi_aoi_rgb, ndmi_aoi_mask, ndmi_png_aoi)
-        save_rgba_overlay_png_with_transparency(mvi_aoi_rgb, mvi_aoi_mask, mvi_png_aoi)
-        
+        mask_bool = (MASK > 0)
+
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+
         # AlphaEarth overlay
-        alphaearth_png_aoi = None
+        alphaearth_overlay_b64 = None
         if alphaearth_pca_rgb is not None and alphaearth_meta is not None:
             valid_mask = alphaearth_meta.get('mask', np.ones(alphaearth_pca_rgb.shape[:2], dtype=bool))
             alphaearth_aoi_rgb, alphaearth_aoi_mask, _, _ = warp_rgb_and_mask_to_aoi(
@@ -394,29 +337,20 @@ async def process_image(req: ProcessImageRequest):
                 alphaearth_meta['transform'], alphaearth_meta['crs'],
                 (min_lon, min_lat, max_lon, max_lat), scale_m=10, geometry=req.geometry
             )
-            alphaearth_png_aoi = generate_overlay_path("model5_alphaearth_overlay")
             mask_for_save = (alphaearth_aoi_mask > 0)
-            save_rgba_overlay_png_with_transparency(alphaearth_aoi_rgb, mask_for_save, alphaearth_png_aoi)
+            alphaearth_overlay_b64 = rgb_mask_to_base64_gpu(alphaearth_aoi_rgb, mask_for_save)
         
-        PROGRESS_TRACKER.update_phase(job_id, "Visualization", 3, 'Generating thumbnails')
-        
+        PROGRESS_TRACKER.update_phase(job_id, "Visualization", 2, 'Generating thumbnails')
+
         # Build thumbnails (RGB = B4(Red), B3(Green), B2(Blue))
-        thumbs = {
-            'model1': model1_preview if model1_preview else to_png_bytes(
-                np.dstack([stretch_uint8(B4), stretch_uint8(B3), stretch_uint8(B2)]), MASK
-            ),
-            'model2': to_png_bytes(ndvi_rgb, MASK),
-            'model3': to_png_bytes(ndmi_rgb, MASK),
-            'model4': to_png_bytes(mvi_rgb, MASK)
-        }
-        
+        thumbs = {}
         if cloud_preview:
             thumbs['cloud_mask'] = cloud_preview
         if alphaearth_pca_rgb is not None:
             thumbs['model5'] = to_png_bytes(alphaearth_pca_rgb)
-        
+
         model_names = get_model_names()
-        
+
         analysis_results = {}
         for mid, png in thumbs.items():
             b64 = base64.b64encode(png).decode('ascii')
@@ -424,36 +358,24 @@ async def process_image(req: ProcessImageRequest):
                 'name': model_names.get(mid, mid),
                 'preview_url': f'data:image/png;base64,{b64}'
             }
-        
-        # Add colormap information
-        analysis_results['model2']['colormap'] = {
-            'name': 'RdYlGn', 'min_val': float(ndvi_min), 'max_val': float(ndvi_max), 'label': 'NDVI'
-        }
-        analysis_results['model3']['colormap'] = {
-            'name': 'RdYlGn', 'min_val': float(ndmi_min), 'max_val': float(ndmi_max), 'label': 'NDMI'
-        }
-        analysis_results['model4']['colormap'] = {
-            'name': 'viridis', 'min_val': float(mvi_min), 'max_val': float(mvi_max), 'label': 'MVI'
-        }
-        
-        # Add overlay URLs (use /outputs/ static mount for direct access)
+
+        # Add overlay URLs
         def to_outputs_url(path):
-            """Convert absolute path to /outputs/filename URL"""
+            """Convert absolute path to /outputs/filename URL (legacy for model1)"""
             return f"/outputs/{os.path.basename(path)}"
-        
+
         if cloud_overlay_png_path and cloud_overlay_meta:
-            analysis_results['cloud_mask']['overlay_url'] = to_outputs_url(cloud_overlay_png_path)
-        if model1_overlay_png_path and model1_overlay_meta:
-            analysis_results['model1']['overlay_url'] = to_outputs_url(model1_overlay_png_path)
-        
-        analysis_results['model2']['overlay_url'] = to_outputs_url(ndvi_png_aoi)
-        analysis_results['model3']['overlay_url'] = to_outputs_url(ndmi_png_aoi)
-        analysis_results['model4']['overlay_url'] = to_outputs_url(mvi_png_aoi)
-        
-        if alphaearth_png_aoi:
-            analysis_results['model5']['overlay_url'] = to_outputs_url(alphaearth_png_aoi)
-        
-        analysis_results['overlay_meta'] = model1_overlay_meta or {
+            analysis_results['cloud_mask']['overlay_url'] = cloud_overlay_png_path  # already base64
+
+        if alphaearth_overlay_b64:
+            analysis_results['model5']['overlay_url'] = alphaearth_overlay_b64
+
+        # Compute overlay_meta from AlphaEarth warp or model1
+        aoi_w = aoi_h = 0
+        if alphaearth_pca_rgb is not None and alphaearth_meta is not None:
+            # Already computed above
+            pass
+        analysis_results['overlay_meta'] = cloud_overlay_meta or {
             'width': int(aoi_w), 'height': int(aoi_h),
             'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
         }
@@ -473,6 +395,7 @@ async def process_image(req: ProcessImageRequest):
             'original_10m_gcs_uri': file_uri,
             'original_20m_gcs_uri': file_uri,
             'analysis_results': analysis_results,
+            'gpu_cache_key': gpu_cache_key,
             'export_started': True,
             'message': 'Processing completed'
         }

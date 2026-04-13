@@ -53,6 +53,13 @@ class ImageProcessorController {
                 console.error('[PROCESS] Polling failed:', e);
             });
 
+            const currentBbox = window.mapManager.getCurrentBounds();
+            const currentGeometry = window.mapManager.getCurrentGeoJSON()?.geometry;
+
+            // Save bbox/geometry for later use by mangrove segmentation
+            this.platform.processedBbox = currentBbox;
+            this.platform.processedGeometry = currentGeometry;
+
             const response = await fetch('/api/process-image', {
                 method: 'POST',
                 headers: {
@@ -60,8 +67,8 @@ class ImageProcessorController {
                 },
                 body: JSON.stringify({
                     item_id: imageId,
-                    bbox: window.mapManager.getCurrentBounds(),
-                    geometry: window.mapManager.getCurrentGeoJSON()?.geometry,
+                    bbox: currentBbox,
+                    geometry: currentGeometry,
                     intensity_multiplier: 1.5,
                     job_id: jobId
                 }),
@@ -82,7 +89,9 @@ class ImageProcessorController {
                 this.platform._progressStop = true;
                 this.platform.hideLoading();
                 
-                // Switch to Analysis tab to show results
+                // Enable analyze button and switch to analysis
+                const openBtn = document.getElementById('open-analysis-btn');
+                if (openBtn) openBtn.disabled = false;
                 this.platform.switchToAnalysisTab();
 
             } else {
@@ -195,133 +204,116 @@ class ImageProcessorController {
 
         const analysisList = document.querySelector('.analysis-list');
         if (!analysisList) return;
-        
+
         analysisList.innerHTML = '';
 
-        const sortedEntries = Object.entries(analysisResults).sort(([keyA], [keyB]) => {
-            if (keyA === 'overlay_meta') return 1;
-            if (keyB === 'overlay_meta') return -1;
-            if (keyA === 'cloud_mask') return -1;
-            if (keyB === 'cloud_mask') return 1;
-            return 0;
+        // Structured layout: Cloud Mask, AlphaEarth, Spectral Analysis, Target Detection
+        const renderOrder = ['cloud_mask', 'model5'];
+
+        renderOrder.forEach(modelId => {
+            const result = analysisResults[modelId];
+            if (!result) return;
+            this._addOverlayItem(analysisList, modelId, result);
         });
 
-        sortedEntries.forEach(([modelId, result]) => {
-            if (modelId === 'overlay_meta') return;
+        // Spectral Analysis section
+        this.addSpectralAnalysisOption(analysisList);
 
-            const analysisItem = document.createElement('div');
-            analysisItem.className = 'analysis-item';
-            analysisItem.dataset.modelId = modelId;
-            analysisItem.dataset.active = 'false';
-
-            let innerHTML = `
-                <img class="analysis-thumbnail" src="${result.preview_url || result.thumbnail_url || ''}" alt="${result.name}" />
-                <div class="analysis-info">
-                    <h4 class="analysis-title">${result.name}</h4>
-                    <p class="analysis-subtitle">${(result.bands || []).join(', ')}</p>
-                    <div class="analysis-status inactive">Click to toggle overlay</div>
-            `;
-
-            const isIndexResult = result.colormap || modelId.includes('model2') || modelId.includes('model3') || modelId.includes('model4');
-            const isDeepLearningModel = modelId === 'model1';
-            const isCloudMask = modelId === 'cloud_mask';
-            const isAlphaEarth = modelId === 'model5';
-
-            if (isIndexResult && result.colormap) {
-                innerHTML += this.createColorbarWithControls(result.colormap, modelId);
-            } else if (result.colormap) {
-                innerHTML += this.createColorbar(result.colormap);
-            } else if (isDeepLearningModel || isAlphaEarth) {
-                innerHTML += `
-                    <div class="model-controls">
-                        <button class="change-monitoring-btn" title="Click to start change monitoring">🌏</button>
-                    </div>
-                `;
-            }
-
-            innerHTML += `</div>`;
-            analysisItem.innerHTML = innerHTML;
-
-            analysisItem.dataset.originalModelId = modelId;
-            analysisItem.dataset.currentLayerId = modelId;
-            analysisItem.dataset.currentOverlayUrl = result.overlay_url;
-            analysisItem.dataset.originalOverlayUrl = result.overlay_url;
-
-            // Click to toggle overlay
-            analysisItem.onclick = async () => {
-                const isActive = analysisItem.dataset.active === 'true';
-                const statusEl = analysisItem.querySelector('.analysis-status');
-                const currentLayerId = analysisItem.dataset.currentLayerId;
-                const currentOverlayUrl = analysisItem.dataset.currentOverlayUrl;
-                const isBinary = analysisItem.dataset.isBinary === 'true';
-
-                if (!currentOverlayUrl) {
-                    this.platform.showNotification('Overlay not available yet', 'error');
-                    return;
-                }
-
-                if (!isActive) {
-                    if (window.mapManager) {
-                        const layerName = isBinary ? `${result.name} (Binary)` : result.name;
-                        await window.mapManager.showAnalysisLayer(currentLayerId, currentOverlayUrl, layerName);
-                        window.mapManager.outlineAOI();
-                    }
-                    analysisItem.dataset.active = 'true';
-                    analysisItem.classList.add('active');
-                    statusEl.textContent = isBinary ? 'Binary mask active' : 'Overlay active';
-                    statusEl.classList.remove('inactive');
-                    statusEl.classList.add('active');
-                } else {
-                    if (window.mapManager) {
-                        window.mapManager.hideAnalysisLayer(currentLayerId);
-                    }
-                    analysisItem.dataset.active = 'false';
-                    analysisItem.classList.remove('active');
-                    statusEl.textContent = 'Click to toggle overlay';
-                    statusEl.classList.remove('active');
-                    statusEl.classList.add('inactive');
-                }
-            };
-
-            // Add control button event handlers
-            if (isIndexResult && result.colormap) {
-                const pixelValueBtn = analysisItem.querySelector('.pixel-value-btn');
-                if (pixelValueBtn) {
-                    pixelValueBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        this.platform.togglePixelValueInspection(modelId, result, pixelValueBtn);
-                    };
-                }
-
-                const changeMonitoringBtn = analysisItem.querySelector('.change-monitoring-btn');
-                if (changeMonitoringBtn) {
-                    changeMonitoringBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        this.platform.startChangeMonitoring(modelId, result, changeMonitoringBtn);
-                    };
-                }
-
-                // Setup colorbar threshold handles
-                this.setupColorbarThreshold(analysisItem, modelId, result);
-            }
-
-            if (isDeepLearningModel || isAlphaEarth) {
-                const changeMonitoringBtn = analysisItem.querySelector('.change-monitoring-btn');
-                if (changeMonitoringBtn) {
-                    changeMonitoringBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        this.platform.startChangeMonitoring(modelId, result, changeMonitoringBtn);
-                    };
-                }
-            }
-
-            analysisList.appendChild(analysisItem);
-        });
-
-        this.addCustomVisualizationOption(analysisList);
+        // Target Detection section
         this.addTargetDetectionOption(analysisList);
 
+        // Mangrove Segmentation section
+        this.addMangroveSegmentationOption(analysisList);
+
+        // SAM2 Segmentation section
+        this.addSAM2Option(analysisList);
+
         console.log('Analysis results displayed in list format');
+    }
+
+    _addOverlayItem(analysisList, modelId, result) {
+        const analysisItem = document.createElement('div');
+        analysisItem.className = 'analysis-item';
+        analysisItem.dataset.modelId = modelId;
+        analysisItem.dataset.active = 'false';
+
+        let innerHTML = `
+            <img class="analysis-thumbnail" src="${result.preview_url || result.thumbnail_url || ''}" alt="${result.name}" />
+            <div class="analysis-info">
+                <h4 class="analysis-title">${result.name}</h4>
+                <p class="analysis-subtitle">${(result.bands || []).join(', ')}</p>
+                <div class="analysis-status inactive">Click to toggle overlay</div>
+            </div>
+        `;
+
+        analysisItem.innerHTML = innerHTML;
+
+        analysisItem.dataset.originalModelId = modelId;
+        analysisItem.dataset.currentLayerId = modelId;
+        analysisItem.dataset.currentOverlayUrl = result.overlay_url;
+        analysisItem.dataset.originalOverlayUrl = result.overlay_url;
+
+        // Click to toggle overlay
+        analysisItem.onclick = async () => {
+            const isActive = analysisItem.dataset.active === 'true';
+            const statusEl = analysisItem.querySelector('.analysis-status');
+            const currentOverlayUrl = analysisItem.dataset.currentOverlayUrl;
+
+            if (!currentOverlayUrl) {
+                this.platform.showNotification('Overlay not available yet', 'error');
+                return;
+            }
+
+            if (!isActive) {
+                if (window.mapManager) {
+                    await window.mapManager.showAnalysisLayer(modelId, currentOverlayUrl, result.name);
+                    window.mapManager.outlineAOI();
+                }
+                analysisItem.dataset.active = 'true';
+                analysisItem.classList.add('active');
+                statusEl.textContent = 'Overlay active';
+                statusEl.classList.remove('inactive');
+                statusEl.classList.add('active');
+            } else {
+                if (window.mapManager) {
+                    window.mapManager.hideAnalysisLayer(modelId);
+                }
+                analysisItem.dataset.active = 'false';
+                analysisItem.classList.remove('active');
+                statusEl.textContent = 'Click to toggle overlay';
+                statusEl.classList.remove('active');
+                statusEl.classList.add('inactive');
+            }
+        };
+
+        analysisList.appendChild(analysisItem);
+    }
+
+    addSpectralAnalysisOption(analysisList) {
+        const saItem = document.createElement('div');
+        saItem.className = 'analysis-item spectral-analysis-option';
+        saItem.dataset.modelId = 'spectral-analysis';
+        saItem.dataset.active = 'false';
+
+        saItem.innerHTML = `
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #4CAF50 0%, #2196F3 100%);">
+                <div class="custom-icon">📊</div>
+            </div>
+            <div class="analysis-info">
+                <h4 class="analysis-title">Spectral Analysis</h4>
+                <div class="analysis-status inactive">Click to start</div>
+            </div>
+        `;
+
+        saItem.onclick = (e) => {
+            if (e.target.closest('.sa-ui')) return;
+            if (!this.platform.spectralAnalysis) {
+                this.platform.spectralAnalysis = new SpectralAnalysisController(this.platform);
+            }
+            this.platform.spectralAnalysis.handleItemClick(saItem);
+        };
+
+        analysisList.appendChild(saItem);
     }
 
     addTargetDetectionOption(analysisList) {
@@ -331,8 +323,18 @@ class ImageProcessorController {
         targetItem.dataset.active = 'false';
 
         targetItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);">
-                <div class="custom-icon">🎯</div>
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #1565c0 0%, #00838f 100%);">
+                <div class="custom-icon td-icon-svg">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="6"/>
+                        <circle cx="12" cy="12" r="2"/>
+                        <line x1="12" y1="1" x2="12" y2="4"/>
+                        <line x1="12" y1="20" x2="12" y2="23"/>
+                        <line x1="1" y1="12" x2="4" y2="12"/>
+                        <line x1="20" y1="12" x2="23" y2="12"/>
+                    </svg>
+                </div>
             </div>
             <div class="analysis-info">
                 <h4 class="analysis-title">Target Detection</h4>
@@ -354,6 +356,73 @@ class ImageProcessorController {
         };
 
         analysisList.appendChild(targetItem);
+    }
+
+    addMangroveSegmentationOption(analysisList) {
+        const msItem = document.createElement('div');
+        msItem.className = 'analysis-item mangrove-segmentation-option';
+        msItem.dataset.modelId = 'mangrove-segmentation';
+        msItem.dataset.active = 'false';
+
+        msItem.innerHTML = `
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #00897b 0%, #00bcd4 100%);">
+                <div class="custom-icon">🌿</div>
+            </div>
+            <div class="analysis-info">
+                <h4 class="analysis-title">Mangrove Segmentation</h4>
+                <div class="analysis-status inactive">Click to start</div>
+            </div>
+        `;
+
+        msItem.onclick = (e) => {
+            if (e.target.closest('.ms-ui')) return;
+            try {
+                if (!this.platform.mangroveSegmentation) {
+                    this.platform.mangroveSegmentation = new MangroveSegmentationController(this.platform);
+                }
+                this.platform.mangroveSegmentation.handleItemClick(msItem);
+            } catch (err) {
+                console.error('Mangrove Segmentation error:', err);
+                this.platform.showNotification(`Mangrove Segmentation error: ${err.message}`, 'error');
+            }
+        };
+
+        analysisList.appendChild(msItem);
+    }
+
+    addSAM2Option(analysisList) {
+        const sam2Item = document.createElement('div');
+        sam2Item.className = 'analysis-item sam2-option';
+        sam2Item.dataset.modelId = 'sam2';
+        sam2Item.dataset.active = 'false';
+
+        sam2Item.innerHTML = `
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #7b1fa2 0%, #e91e63 100%);">
+                <div class="custom-icon sam2-icon-svg">
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M6 9l6 6 6-6"/>
+                        <rect x="3" y="3" width="18" height="18" rx="3"/>
+                        <circle cx="8" cy="8" r="1.5" fill="white"/>
+                        <circle cx="16" cy="16" r="1.5" fill="white"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="analysis-info">
+                <h4 class="analysis-title">SAM2 Segmentation</h4>
+                <div class="analysis-status inactive">Click to start</div>
+            </div>
+        `;
+
+        sam2Item.onclick = (e) => {
+            if (e.target.closest('.sam2-ui')) return;
+            if (!this.platform.sam2Controller) {
+                this.platform.showNotification('SAM2 module not loaded', 'error');
+                return;
+            }
+            this.platform.sam2Controller.handleItemClick();
+        };
+
+        analysisList.appendChild(sam2Item);
     }
 
     addCustomVisualizationOption(analysisList) {
@@ -693,7 +762,6 @@ class ImageProcessorController {
                     <div class="colorbar-label">${colormap.label}</div>
                     <div class="colorbar-controls">
                         <button class="pixel-value-btn" title="Inspect pixel values">🖱️</button>
-                        <button class="change-monitoring-btn" title="Change monitoring">🌏</button>
                     </div>
                 </div>
                 <div class="colorbar-with-threshold">

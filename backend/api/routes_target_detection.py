@@ -56,6 +56,28 @@ TARGET_DETECTION_CACHE_LOCK = threading.Lock()
 S2_BAND_NAMES = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
 
 
+def create_training_loss_chart(loss_history: list, algorithm: str) -> str:
+    """Create training loss curve chart and return as base64 PNG."""
+    if not loss_history:
+        return ''
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=120)
+    steps = list(range(1, len(loss_history) + 1))
+    ax.plot(steps, loss_history, '-', linewidth=2, color='#7b1fa2', label='Training Loss')
+    ax.set_xlabel('Step', fontsize=11)
+    ax.set_ylabel('Loss', fontsize=11)
+    ax.set_title(f'{algorithm} Training Progress', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    buf = pyio.BytesIO()
+    plt.savefig(buf, format='png', facecolor='white', edgecolor='none')
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.getvalue()).decode('utf-8')
+
+
 def create_score_distribution_chart(
     detection_map: np.ndarray, 
     threshold: float, 
@@ -184,11 +206,13 @@ def run_detection(req: TargetDetectionRequest):
         
         # Convert target points to list of (lat, lon) tuples
         target_points_latlon = [(p.lat, p.lng) for p in req.target_points]
-        
+        negative_points_latlon = [(p.lat, p.lng) for p in req.negative_points] if req.negative_points else []
+
         # Run detection
         result = run_target_detection(
             raster_path=cached_raster_path,
             target_points_latlon=target_points_latlon,
+            negative_points_latlon=negative_points_latlon,
             algorithm=req.algorithm,
             threshold_percentile=req.threshold_percentile or 95.0,
             auto_threshold=req.auto_threshold if req.auto_threshold is not None else True,
@@ -253,44 +277,37 @@ def run_detection(req: TargetDetectionRequest):
                 'target_spectrum': result['target_spectrum']
             }
         
-        # Save overlay files
-        os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        
-        # Detection map overlay
-        detection_overlay_path = os.path.join(OUTPUTS_DIR, f'{detection_id}_detection.png')
-        save_rgba_overlay_png(aoi_detection, aoi_mask_detection, detection_overlay_path)
-        
-        # Binary mask overlay
-        mask_overlay_path = os.path.join(OUTPUTS_DIR, f'{detection_id}_mask.png')
-        save_rgba_overlay_png(aoi_binary, aoi_mask_binary, mask_overlay_path)
-        
-        # Create preview images
-        # Detection preview
+        # Generate overlay base64 (no file I/O)
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu, rgba_to_base64_gpu
+
+        detection_overlay_url = rgb_mask_to_base64_gpu(aoi_detection, aoi_mask_detection)
+        mask_overlay_url = rgb_mask_to_base64_gpu(aoi_binary, aoi_mask_binary)
+
+        # Previews
         detection_preview = Image.fromarray(detection_rgb, mode='RGB')
         detection_preview.thumbnail((256, 256), Image.LANCZOS)
         detection_buf = pyio.BytesIO()
         detection_preview.save(detection_buf, format='PNG')
         detection_preview_b64 = base64.b64encode(detection_buf.getvalue()).decode('utf-8')
-        
-        # Mask preview
+
         mask_rgba = np.zeros((*mask_rgb.shape[:2], 4), dtype=np.uint8)
         mask_rgba[:, :, :3] = mask_rgb
         mask_rgba[:, :, 3] = 255
         mask_rgba[~binary_mask, 3] = 0
-        
-        mask_preview = Image.fromarray(mask_rgba, mode='RGBA')
-        mask_preview.thumbnail((256, 256), Image.LANCZOS)
+        mask_preview_b64 = base64.b64encode(pyio.BytesIO(
+            Image.fromarray(mask_rgba, mode='RGBA').resize((256, 256), Image.LANCZOS).tobytes()
+        ).getvalue()).decode('utf-8') if False else ''
+        # Simpler preview
+        mask_preview_img = Image.fromarray(mask_rgba, mode='RGBA')
+        mask_preview_img.thumbnail((256, 256), Image.LANCZOS)
         mask_buf = pyio.BytesIO()
-        mask_preview.save(mask_buf, format='PNG')
+        mask_preview_img.save(mask_buf, format='PNG')
         mask_preview_b64 = base64.b64encode(mask_buf.getvalue()).decode('utf-8')
-        
-        # Calculate detected pixel statistics
+
+        # Statistics
         n_detected = int(np.sum(binary_mask))
         total_pixels = int(binary_mask.size)
         detection_percentage = round(100 * n_detected / total_pixels, 2)
-        
-        detection_overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + detection_overlay_path)}"
-        mask_overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + mask_overlay_path)}"
         
         # Generate analysis charts
         score_dist_chart = create_score_distribution_chart(detection_map, threshold, req.algorithm)
@@ -344,7 +361,9 @@ def run_detection(req: TargetDetectionRequest):
                 'score_distribution': f"data:image/png;base64,{score_dist_chart}",
                 'spectrum_comparison': f"data:image/png;base64,{spectrum_chart}"
             },
-            'used_bands': result['used_bands']
+            'used_bands': result['used_bands'],
+            'training_chart': (f"data:image/png;base64,{create_training_loss_chart(result.get('loss_history', []), req.algorithm)}"
+                              if result.get('loss_history') else None),
         }
         
     except HTTPException:
@@ -395,30 +414,25 @@ def apply_detection_threshold(req: TargetDetectionThresholdRequest):
             scale_m=10
         )
         
-        # Save overlay
-        os.makedirs(OUTPUTS_DIR, exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        mask_overlay_path = os.path.join(OUTPUTS_DIR, f'{req.detection_id}_mask_{timestamp}.png')
-        save_rgba_overlay_png(aoi_binary, aoi_mask_binary, mask_overlay_path)
-        
-        # Create preview
+        # Generate overlay base64 (no file I/O)
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+        mask_overlay_url = rgb_mask_to_base64_gpu(aoi_binary, aoi_mask_binary)
+
+        # Preview
         mask_rgba = np.zeros((*mask_rgb.shape[:2], 4), dtype=np.uint8)
         mask_rgba[:, :, :3] = mask_rgb
         mask_rgba[:, :, 3] = 255
         mask_rgba[~binary_mask, 3] = 0
-        
         mask_preview = Image.fromarray(mask_rgba, mode='RGBA')
         mask_preview.thumbnail((256, 256), Image.LANCZOS)
         mask_buf = pyio.BytesIO()
         mask_preview.save(mask_buf, format='PNG')
         mask_preview_b64 = base64.b64encode(mask_buf.getvalue()).decode('utf-8')
-        
+
         # Statistics
         n_detected = int(np.sum(binary_mask))
         total_pixels = int(binary_mask.size)
         detection_percentage = round(100 * n_detected / total_pixels, 2)
-        
-        mask_overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + mask_overlay_path)}"
         
         return {
             'detection_id': req.detection_id,

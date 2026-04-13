@@ -17,6 +17,14 @@ class MapLayers {
         this.originalLayer = null;
     }
 
+    _dispatchLayerEvent(eventName, detail) {
+        try {
+            window.dispatchEvent(new CustomEvent(eventName, { detail }));
+        } catch (e) {
+            console.warn(`[MapLayers] Event dispatch error (${eventName}):`, e);
+        }
+    }
+
     initialize() {
         // Store references in manager
         this.manager.imageLayers = this.imageLayers;
@@ -183,21 +191,6 @@ class MapLayers {
                 const aoiOverlap = imageData.aoi_overlap ? (imageData.aoi_overlap * 100).toFixed(1) + '%' : 'N/A';
                 const layerType = imageData.display_type === 'tile' ? 'Dynamic Tile Layer' : 'Static Image';
                 
-                const tooltipContent = `
-                    <div>
-                        <strong>Image ID:</strong> ${imageId}<br>
-                        <strong>Date:</strong> ${dateStr}<br>
-                        <strong>AOI Coverage:</strong> ${aoiOverlap}<br>
-                        <strong>Cloud Cover:</strong> ${imageData.cloud_cover ? imageData.cloud_cover.toFixed(1) : 'N/A'}%<br>
-                        <strong>Type:</strong> ${layerType}
-                    </div>
-                `;
-
-                imageLayer.bindTooltip(tooltipContent, {
-                    permanent: false,
-                    direction: 'top'
-                });
-
                 this.imageLayers[imageId] = imageLayer;
                 this.manager.imageLayers[imageId] = imageLayer;
                 this.manager.map.addLayer(imageLayer);
@@ -206,6 +199,8 @@ class MapLayers {
                 if (this.manager.drawing) {
                     this.manager.drawing.outlineAOI();
                 }
+
+                this._dispatchLayerEvent('layer:added', { id: imageId, type: 'image', name: imageData.datetime ? `Image ${new Date(imageData.datetime).toLocaleDateString()}` : `Image ${imageId}`, layer: imageLayer });
 
                 console.log(`Successfully added layer: ${imageId}`);
                 
@@ -233,11 +228,12 @@ class MapLayers {
                 console.error(`Error removing layer ${layerId}:`, error);
             }
         });
-        
+
         this.imageLayers = {};
         this.manager.imageLayers = {};
         this.selectedImageLayer = null;
-         
+
+        this._dispatchLayerEvent('layers:cleared', { type: 'image' });
         console.log('All image layers cleared');
     }
 
@@ -251,7 +247,8 @@ class MapLayers {
                 if (this.selectedImageLayer === imageId) {
                     this.selectedImageLayer = null;
                 }
-                
+
+                this._dispatchLayerEvent('layer:removed', { id: imageId, type: 'image' });
                 console.log(`Removed image layer: ${imageId}`);
             } catch (error) {
                 console.error(`Error removing image layer ${imageId}:`, error);
@@ -298,11 +295,6 @@ class MapLayers {
                 pane: 'dataPane'
             });
 
-            processedLayer.bindTooltip(
-                '<div><strong>Processed Image</strong><br>BGR Visualization</div>',
-                { permanent: false, direction: 'top' }
-            );
-
             const processedId = 'processed_' + Date.now();
             this.processedLayers[processedId] = processedLayer;
             this.manager.processedLayers[processedId] = processedLayer;
@@ -311,6 +303,7 @@ class MapLayers {
                 this.manager.map.addLayer(processedLayer);
             }
 
+            this._dispatchLayerEvent('layer:added', { id: processedId, type: 'processed', name: 'Processed Image', layer: processedLayer });
             console.log('Processed image displayed on map');
 
         } catch (error) {
@@ -338,7 +331,7 @@ class MapLayers {
     }
 
     showAnalysisLayer(modelId, imageUrl, modelName, boundsOverride = null) {
-        if (!this.manager.drawing || !this.manager.drawing.currentAOI) {
+        if (!boundsOverride && (!this.manager.drawing || !this.manager.drawing.currentAOI)) {
             console.warn('No AOI defined for analysis layer display');
             return;
         }
@@ -371,15 +364,11 @@ class MapLayers {
                 console.log(`Analysis overlay ${modelId} loaded successfully`);
             });
 
-            analysisLayer.bindTooltip(
-                `<div><strong>${modelName}</strong><br>Analysis Model: ${modelId}</div>`,
-                { permanent: false, direction: 'top' }
-            );
-
             this.analysisLayers[modelId] = analysisLayer;
             this.manager.analysisLayers[modelId] = analysisLayer;
             this.manager.map.addLayer(analysisLayer);
 
+            this._dispatchLayerEvent('layer:added', { id: modelId, type: 'analysis', name: modelName || modelId, layer: analysisLayer });
             console.log(`Analysis layer ${modelId} displayed on map`);
 
         } catch (error) {
@@ -393,6 +382,7 @@ class MapLayers {
                 this.manager.map.removeLayer(this.analysisLayers[modelId]);
                 delete this.analysisLayers[modelId];
                 delete this.manager.analysisLayers[modelId];
+                this._dispatchLayerEvent('layer:removed', { id: modelId, type: 'analysis' });
                 console.log(`Analysis layer ${modelId} removed from map`);
             } catch (error) {
                 console.error(`Error removing analysis layer ${modelId}:`, error);
@@ -403,6 +393,7 @@ class MapLayers {
                 if (this.manager.map.hasLayer(cachedLayer)) {
                     this.manager.map.removeLayer(cachedLayer);
                 }
+                this._dispatchLayerEvent('layer:removed', { id: modelId, type: 'analysis' });
                 console.log(`Cached analysis layer ${modelId} removed from map`);
             } catch (error) {
                 console.error(`Error removing cached analysis layer ${modelId}:`, error);
@@ -423,7 +414,7 @@ class MapLayers {
         });
         this.analysisLayers = {};
         this.manager.analysisLayers = {};
-        
+
         // Clear cached model layers
         Object.keys(this.modelLayerCache).forEach(modelId => {
             try {
@@ -452,7 +443,8 @@ class MapLayers {
         // Clear COG cache
         this.cogCache = {};
         this.manager.cogCache = {};
-        
+
+        this._dispatchLayerEvent('layers:cleared', { type: 'analysis' });
         console.log('All analysis layers cleared');
     }
 
@@ -469,7 +461,8 @@ class MapLayers {
         
         this.tileLayers = {};
         this.manager.tileLayers = {};
-        
+
+        this._dispatchLayerEvent('layers:cleared', { type: 'tile' });
         console.log('All tile layers cleared');
     }
 
@@ -477,26 +470,26 @@ class MapLayers {
         try {
             this.hideTileLayer(layerId);
 
-            const tileLayer = this._createTileLayerWithRetry(tileTemplate, {
+            const layerBounds = bounds ? L.latLngBounds(bounds) : undefined;
+            const opts = {
                 attribution: 'Google Earth Engine',
                 opacity: 1.0,
                 maxZoom: 18,
-                maxNativeZoom: 14,  // Limit to reduce GEE rate limiting (429 errors)
+                maxNativeZoom: 14,
                 pane: 'dataPane',
                 crossOrigin: 'anonymous',
                 keepBuffer: 2,
                 updateWhenZooming: false,
                 updateWhenIdle: true,
-            }, layerId);
-
-            if (tooltip) {
-                tileLayer.bindTooltip(tooltip, { permanent: false, direction: 'top' });
-            }
+            };
+            if (layerBounds) opts.bounds = layerBounds;
+            const tileLayer = this._createTileLayerWithRetry(tileTemplate, opts, layerId);
 
             this.tileLayers[layerId] = tileLayer;
             this.manager.tileLayers[layerId] = tileLayer;
             this.manager.map.addLayer(tileLayer);
 
+            this._dispatchLayerEvent('layer:added', { id: layerId, type: 'tile', name: tooltip || `Tile ${layerId}`, layer: tileLayer });
             console.log(`Tile layer ${layerId} displayed on map`);
 
         } catch (error) {
@@ -510,6 +503,7 @@ class MapLayers {
                 this.manager.map.removeLayer(this.tileLayers[layerId]);
                 delete this.tileLayers[layerId];
                 delete this.manager.tileLayers[layerId];
+                this._dispatchLayerEvent('layer:removed', { id: layerId, type: 'tile' });
                 console.log(`Tile layer ${layerId} removed from map`);
             } catch (error) {
                 console.error(`Error removing tile layer ${layerId}:`, error);
@@ -591,6 +585,7 @@ class MapLayers {
                 if (!this.manager.map.hasLayer(cachedLayer)) {
                     this.manager.map.addLayer(cachedLayer);
                 }
+                this._dispatchLayerEvent('layer:added', { id: modelId, type: 'analysis', name: `Model ${modelId}`, layer: cachedLayer });
                 console.log(`Model ${modelId} layer restored from cache`);
                 return;
             }
@@ -613,7 +608,8 @@ class MapLayers {
             this.modelLayerCache[modelId] = layer;
             this.manager.modelLayerCache[modelId] = layer;
             layer.addTo(this.manager.map);
-            
+
+            this._dispatchLayerEvent('layer:added', { id: modelId, type: 'analysis', name: `Model ${modelId}`, layer });
             console.log(`Model ${modelId} from COG displayed (cached)`);
         } catch (e) {
             console.error('Failed to display model from COG:', e);
@@ -629,6 +625,7 @@ class MapLayers {
                 if (!this.manager.map.hasLayer(cachedLayer)) {
                     this.manager.map.addLayer(cachedLayer);
                 }
+                this._dispatchLayerEvent('layer:added', { id: modelId, type: 'analysis', name: `Binary Mask ${modelId}`, layer: cachedLayer });
                 console.log(`Binary mask ${modelId} layer restored from cache`);
                 return;
             }
@@ -657,7 +654,8 @@ class MapLayers {
             this.modelLayerCache[modelId] = layer;
             this.manager.modelLayerCache[modelId] = layer;
             layer.addTo(this.manager.map);
-            
+
+            this._dispatchLayerEvent('layer:added', { id: modelId, type: 'analysis', name: `Binary Mask ${modelId}`, layer });
             console.log(`Binary mask ${modelId} from COG displayed (cached)`);
         } catch (e) {
             console.error('Failed to display binary mask COG:', e);

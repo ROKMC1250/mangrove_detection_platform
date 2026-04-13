@@ -170,17 +170,66 @@ def get_band_data_from_raster(raster_data: np.ndarray) -> Dict[str, np.ndarray]:
     }
 
 
+def calculate_savi(nir: np.ndarray, red: np.ndarray, L: float = 0.5) -> np.ndarray:
+    """Calculate Soil Adjusted Vegetation Index.
+
+    SAVI = ((NIR - RED) / (NIR + RED + L)) * (1 + L)
+    """
+    return safe_divide(nir - red, nir + red + L) * (1 + L)
+
+
+def calculate_evi(nir: np.ndarray, red: np.ndarray, blue: np.ndarray,
+                  G: float = 2.5, C1: float = 6.0, C2: float = 7.5, L: float = 1.0) -> np.ndarray:
+    """Calculate Enhanced Vegetation Index.
+
+    EVI = G * (NIR - RED) / (NIR + C1*RED - C2*BLUE + L)
+    """
+    return G * safe_divide(nir - red, nir + C1 * red - C2 * blue + L)
+
+
+# Registry of all supported spectral indices
+INDEX_REGISTRY = {
+    'ndvi': {
+        'name': 'NDVI', 'full_name': 'Normalized Difference Vegetation Index',
+        'formula': '(B8-B4)/(B8+B4)', 'bands': ['B8', 'B4'],
+        'colormap': 'RdYlGn', 'vmin': -1, 'vmax': 1,
+    },
+    'mvi': {
+        'name': 'MVI', 'full_name': 'Mangrove Vegetation Index',
+        'formula': '(B8-B3)/(B11-B3)', 'bands': ['B8', 'B3', 'B11'],
+        'colormap': 'viridis', 'vmin': None, 'vmax': None,
+    },
+    'ndmi': {
+        'name': 'NDMI', 'full_name': 'Normalized Difference Moisture Index',
+        'formula': '(B8-B12)/(B8+B12)', 'bands': ['B8', 'B12'],
+        'colormap': 'RdYlGn', 'vmin': -1, 'vmax': 1,
+    },
+    'ndwi': {
+        'name': 'NDWI', 'full_name': 'Normalized Difference Water Index',
+        'formula': '(B3-B8)/(B3+B8)', 'bands': ['B3', 'B8'],
+        'colormap': 'RdYlBu', 'vmin': -1, 'vmax': 1,
+    },
+    'savi': {
+        'name': 'SAVI', 'full_name': 'Soil Adjusted Vegetation Index',
+        'formula': '((B8-B4)/(B8+B4+L))*(1+L)', 'bands': ['B8', 'B4'],
+        'colormap': 'RdYlGn', 'vmin': -1, 'vmax': 1,
+    },
+    'evi': {
+        'name': 'EVI', 'full_name': 'Enhanced Vegetation Index',
+        'formula': '2.5*(B8-B4)/(B8+6*B4-7.5*B2+1)', 'bands': ['B8', 'B4', 'B2'],
+        'colormap': 'RdYlGn', 'vmin': -1, 'vmax': 1,
+    },
+}
+
+
 def get_index_visualization_params(index_type: str) -> Tuple[str, float, float]:
     """Get visualization parameters for an index type.
-    
+
     Returns:
         Tuple of (colormap_name, vmin, vmax)
     """
-    params = {
-        'ndvi': ('RdYlGn', -1, 1),
-        'ndmi': ('RdYlGn', -1, 1),
-        'mvi': ('viridis', None, None),  # Dynamic range
-        'ndwi': ('RdYlBu', -1, 1),
-    }
-    return params.get(index_type.lower(), ('viridis', None, None))
+    info = INDEX_REGISTRY.get(index_type.lower())
+    if info:
+        return (info['colormap'], info.get('vmin'), info.get('vmax'))
+    return ('viridis', None, None)
 

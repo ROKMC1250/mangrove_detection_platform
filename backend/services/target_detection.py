@@ -251,6 +251,9 @@ DETECTORS = {
     'MF': MFDetector
 }
 
+# MLP-based models (dispatched to repo/Target_detection)
+MLP_ALGORITHMS = {'MLP_AMF', 'MLP_ACE'}
+
 
 def get_detector(name: str) -> BaseDetector:
     """Get detector instance by name."""
@@ -262,7 +265,7 @@ def get_detector(name: str) -> BaseDetector:
 
 def get_available_detectors() -> List[Dict]:
     """Get list of available detectors with descriptions."""
-    return [
+    results = [
         {
             'id': name.lower(),
             'name': name,
@@ -270,6 +273,10 @@ def get_available_detectors() -> List[Dict]:
         }
         for name in DETECTORS.keys()
     ]
+    # Add MLP-based detectors
+    results.append({'id': 'mlp_amf', 'name': 'MLP_AMF', 'description': 'Learnable MLP projector with AMF scoring'})
+    results.append({'id': 'mlp_ace', 'name': 'MLP_ACE', 'description': 'Learnable MLP projector with ACE scoring'})
+    return results
 
 
 # =============================================================================
@@ -455,9 +462,84 @@ def find_optimal_threshold_target(data: np.ndarray, target_percentile: float = 9
 # Main Detection Function
 # =============================================================================
 
+def _run_mlp_detection(
+    loader: 'ImageDataLoader',
+    target_points_pixel: List[Tuple[int, int]],
+    negative_points_pixel: List[Tuple[int, int]],
+    algorithm: str,
+    selected_bands: Optional[List[int]] = None,
+) -> Dict:
+    """Dispatch to repo/Target_detection MLP models."""
+    import sys
+    import os
+    repo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'repo', 'Target_detection')
+    repo_path = os.path.abspath(repo_path)
+    if repo_path not in sys.path:
+        sys.path.insert(0, repo_path)
+
+    from inference import detect as mlp_detect
+
+    model_name = "new_method_mlp" if algorithm == "MLP_AMF" else "new_method_mlp_ace"
+    cube = loader.data  # (H, W, C)
+
+    print(f"TARGET DETECTION [MLP] - Running {model_name} on cube {cube.shape}")
+    print(f"TARGET DETECTION [MLP] - pos_points={target_points_pixel}, neg_points={negative_points_pixel}")
+
+    result = mlp_detect(
+        cube=cube,
+        pos_points=target_points_pixel,
+        neg_points=negative_points_pixel,
+        model_name=model_name,
+        threshold=None,  # auto (Otsu)
+    )
+
+    score_map = result["score_map"]
+    mask = result["mask"]
+    threshold = result.get("threshold", 0.5)
+    loss_history = result.get("state", {}).get("loss_history", [])
+
+    # Compute background stats for spectrum chart
+    n_bg_samples = min(int(loader.n_pixels * 0.1), 10000)
+    bg_spectra = loader.get_random_background_spectra(
+        n_samples=n_bg_samples,
+        exclude_points=target_points_pixel,
+        exclude_radius=5,
+    )
+    target_spectra = loader.get_spectra_from_points(target_points_pixel)
+    target_spectrum = np.mean(target_spectra, axis=0)
+
+    valid_mask = np.isfinite(score_map)
+    if np.any(valid_mask):
+        min_val = float(np.min(score_map[valid_mask]))
+        max_val = float(np.max(score_map[valid_mask]))
+        mean_val = float(np.mean(score_map[valid_mask]))
+    else:
+        min_val, max_val, mean_val = 0.0, 1.0, 0.5
+
+    used_bands = selected_bands if selected_bands else list(range(loader.n_bands))
+
+    return {
+        'detection_map': score_map,
+        'threshold': float(threshold) if threshold is not None else find_optimal_threshold_otsu(score_map),
+        'min_val': min_val,
+        'max_val': max_val,
+        'mean_val': mean_val,
+        'transform': loader.transform,
+        'crs': loader.crs,
+        'target_spectrum': target_spectrum.tolist(),
+        'background_mean': np.mean(bg_spectra, axis=0).tolist(),
+        'background_std': np.std(bg_spectra, axis=0).tolist(),
+        'algorithm': algorithm,
+        'target_points_pixel': target_points_pixel,
+        'used_bands': used_bands,
+        'loss_history': loss_history,
+    }
+
+
 def run_target_detection(
     raster_path: str,
     target_points_latlon: List[Tuple[float, float]],
+    negative_points_latlon: Optional[List[Tuple[float, float]]] = None,
     algorithm: str = 'SAM',
     threshold_percentile: float = 95.0,
     auto_threshold: bool = True,
@@ -465,64 +547,83 @@ def run_target_detection(
 ) -> Dict:
     """
     Run target detection on a raster image.
-    
+
     Args:
         raster_path: Path to the raster file
-        target_points_latlon: List of (lat, lon) target coordinates
+        target_points_latlon: List of (lat, lon) positive target coordinates
+        negative_points_latlon: List of (lat, lon) negative (non-target) coordinates
         algorithm: Detection algorithm name
         threshold_percentile: Percentile for auto-threshold (if auto_threshold=False)
         auto_threshold: If True, use Otsu's method to find optimal threshold
         selected_bands: List of band indices to use (0-based). None means all bands.
-        
+
     Returns:
         Dictionary with detection results
     """
+    if negative_points_latlon is None:
+        negative_points_latlon = []
+
     # Load image data
     loader = ImageDataLoader(raster_path)
     print(f"TARGET DETECTION - Loaded image: {loader.shape} (H x W x Bands)")
-    
+
     # Apply band selection if specified
     if selected_bands is not None and len(selected_bands) > 0:
         print(f"TARGET DETECTION - Using selected bands: {selected_bands}")
-        # Filter to only use selected bands
         loader.data = loader.data[:, :, selected_bands]
         print(f"TARGET DETECTION - Filtered image shape: {loader.data.shape}")
-    
+
     used_bands = selected_bands if selected_bands else list(range(loader.n_bands))
-    
+
     # Convert lat/lon to pixel coordinates
     target_points_pixel = []
     for lat, lon in target_points_latlon:
         x, y = loader.latlon_to_pixel(lat, lon)
         target_points_pixel.append((x, y))
-        print(f"TARGET DETECTION - Point ({lat}, {lon}) -> pixel ({x}, {y})")
-    
+        print(f"TARGET DETECTION - Positive point ({lat}, {lon}) -> pixel ({x}, {y})")
+
+    negative_points_pixel = []
+    for lat, lon in negative_points_latlon:
+        x, y = loader.latlon_to_pixel(lat, lon)
+        negative_points_pixel.append((x, y))
+        print(f"TARGET DETECTION - Negative point ({lat}, {lon}) -> pixel ({x}, {y})")
+
+    # Dispatch to MLP models if requested
+    algorithm_upper = algorithm.upper()
+    if algorithm_upper in MLP_ALGORITHMS:
+        return _run_mlp_detection(
+            loader, target_points_pixel, negative_points_pixel,
+            algorithm_upper, selected_bands,
+        )
+
+    # --- Classical detector path ---
     # Get target spectrum (average if multiple points)
     target_spectra = loader.get_spectra_from_points(target_points_pixel)
     target_spectrum = np.mean(target_spectra, axis=0)
     print(f"TARGET DETECTION - Target spectrum shape: {target_spectrum.shape}")
     print(f"TARGET DETECTION - Target spectrum values: {target_spectrum[:5]}... (first 5 bands)")
-    
-    # Get background spectra for fitting
+
+    # Get background spectra for fitting (exclude both positive and negative regions)
+    all_exclude_points = target_points_pixel + negative_points_pixel
     n_bg_samples = min(int(loader.n_pixels * 0.1), 10000)
     bg_spectra = loader.get_random_background_spectra(
         n_samples=n_bg_samples,
-        exclude_points=target_points_pixel,
+        exclude_points=all_exclude_points,
         exclude_radius=5
     )
     print(f"TARGET DETECTION - Background samples: {bg_spectra.shape[0]}")
-    
+
     # Get detector and run detection
     detector = get_detector(algorithm)
     detector.fit_background(bg_spectra)
-    
+
     detection_map = detector.detect(loader.data, target_spectrum)
-    
+
     # Normalize if needed (higher = target for all algorithms)
     if not detector._higher_is_target():
         max_val = np.max(detection_map)
         detection_map = max_val - detection_map
-    
+
     # Calculate statistics
     valid_mask = np.isfinite(detection_map)
     if np.any(valid_mask):
@@ -531,20 +632,18 @@ def run_target_detection(
         mean_val = float(np.mean(detection_map[valid_mask]))
     else:
         min_val, max_val, mean_val = 0.0, 1.0, 0.5
-    
+
     # Find optimal threshold
     if auto_threshold:
-        # Use Otsu's method for optimal threshold
         threshold = find_optimal_threshold_otsu(detection_map)
         print(f"TARGET DETECTION - Using Otsu's method, optimal threshold: {threshold:.4f}")
     else:
-        # Use percentile-based threshold
         threshold = float(np.percentile(detection_map[valid_mask], threshold_percentile))
         print(f"TARGET DETECTION - Using {threshold_percentile}th percentile threshold: {threshold:.4f}")
-    
+
     print(f"TARGET DETECTION - Detection map range: [{min_val:.4f}, {max_val:.4f}]")
     print(f"TARGET DETECTION - Auto threshold ({threshold_percentile}th percentile): {threshold:.4f}")
-    
+
     return {
         'detection_map': detection_map,
         'threshold': threshold,

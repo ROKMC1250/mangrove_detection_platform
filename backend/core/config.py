@@ -14,8 +14,9 @@ FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs")
 STATIC_MOUNT = "/static"
 
-# Model paths
-MODEL_ROOT = os.environ.get('MODEL_ROOT', '/home/hjh1037/Mangrove_segmentation')
+# Model paths - repo/mangrove_segmentation contains model code and checkpoints
+REPO_DIR = os.path.join(PROJECT_ROOT, "repo", "mangrove_segmentation")
+MODEL_ROOT = os.environ.get('MODEL_ROOT', REPO_DIR)
 if MODEL_ROOT and MODEL_ROOT not in sys.path:
     sys.path.append(MODEL_ROOT)
 
@@ -99,6 +100,8 @@ _MODEL_CONFIG = _load_model_config()
 
 # Export model settings
 MODEL_DIR = _MODEL_CONFIG.get('model_dir', '')
+if not MODEL_DIR:
+    MODEL_DIR = os.path.join(REPO_DIR, 'checkpoints', 'segformer_MVI_v1')
 MODEL_CHECKPOINT = _MODEL_CONFIG.get('checkpoint', 'last.pt')
 MODEL1_GPUS = str(_MODEL_CONFIG.get('gpus', ''))
 MODEL1_PATCH_SIZE = int(_MODEL_CONFIG.get('patch_size', 256))

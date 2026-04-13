@@ -37,6 +37,14 @@ class PlatformController {
         this.s1Channels = { r: 'VV', g: 'VH', b: 'VV' };
         this.s1MinMax = { min: -25, max: 0 };
 
+        // Keyboard shortcut mode state
+        this.keyboardShortcutMode = false;
+        this.keyboardShortcutMap = {
+            '1': 'B2', '2': 'B3', '3': 'B4', '4': 'B5', '5': 'B6',
+            '6': 'B7', '7': 'B8', '8': 'B8A', '9': 'B11'
+        };
+        this._originalTileUrls = {};  // layerId -> { url, bounds } for RGB restore
+
         // Initialize modules
         this.initModules();
         this.init();
@@ -76,10 +84,10 @@ class PlatformController {
             this.analysisController = new AnalysisController(this);
         }
 
-        // Initialize change monitoring controller
-        if (typeof ChangeMonitoringController !== 'undefined') {
-            this.changeMonitoring = new ChangeMonitoringController(this);
-        }
+        // Initialize change monitoring controller (disabled)
+        // if (typeof ChangeMonitoringController !== 'undefined') {
+        //     this.changeMonitoring = new ChangeMonitoringController(this);
+        // }
 
         // Initialize custom visualization controller
         if (typeof CustomVisualizationController !== 'undefined') {
@@ -94,6 +102,36 @@ class PlatformController {
         // Initialize target detection controller
         if (typeof TargetDetectionController !== 'undefined') {
             this.targetDetection = new TargetDetectionController(this);
+        }
+
+        // Initialize SAM2 controller
+        if (typeof SAM2Controller !== 'undefined') {
+            this.sam2Controller = new SAM2Controller(this);
+        }
+
+        // Initialize spectral analysis controller
+        if (typeof SpectralAnalysisController !== 'undefined') {
+            this.spectralAnalysis = new SpectralAnalysisController(this);
+        }
+
+        // Initialize local image controller
+        if (typeof LocalImageController !== 'undefined') {
+            this.localImage = new LocalImageController(this);
+        }
+
+        // Initialize spectral inspector
+        if (typeof SpectralInspectorController !== 'undefined') {
+            this.spectralInspector = new SpectralInspectorController(this);
+        }
+
+        // Initialize layer control panel
+        if (typeof LayerControlPanel !== 'undefined' && window.mapManager) {
+            this.layerControlPanel = new LayerControlPanel(window.mapManager);
+        }
+
+        // Initialize dual map controller
+        if (typeof DualMapController !== 'undefined') {
+            this.dualMapController = new DualMapController(this);
         }
 
         console.log('📦 Modular controllers initialized');
@@ -113,6 +151,7 @@ class PlatformController {
         
         if (this.uiManager) {
             this.uiManager.setupTabControls();
+            this.uiManager.setupRightPanelTabControls();
         }
 
         console.log('✅ Platform Controller Ready!');
@@ -153,6 +192,85 @@ class PlatformController {
                 }
                 this.currentImages = [];
                 this.selectedImageId = null;
+            });
+        }
+
+        // Panel toggle
+        const panelToggle = document.getElementById('panel-toggle-btn');
+        const panel = document.getElementById('control-panel');
+        if (panelToggle && panel) {
+            panelToggle.addEventListener('click', () => {
+                const collapsed = panel.classList.toggle('collapsed');
+                panelToggle.textContent = collapsed ? '▶' : '◀';
+                panelToggle.title = collapsed ? 'Show panel' : 'Hide panel';
+                // Resize map
+                setTimeout(() => {
+                    if (window.mapManager?.map) window.mapManager.map.invalidateSize();
+                }, 350);
+            });
+        }
+
+        // Right panel toggle (collapse/expand, not hide)
+        const rightPanelToggle = document.getElementById('right-panel-toggle-btn');
+        if (rightPanelToggle) {
+            rightPanelToggle.addEventListener('click', () => {
+                const rp = document.getElementById('right-panel');
+                if (rp) {
+                    const collapsed = rp.classList.toggle('collapsed');
+                    rightPanelToggle.textContent = collapsed ? '◀' : '▶';
+                    setTimeout(() => {
+                        if (window.mapManager?.map) window.mapManager.map.invalidateSize();
+                    }, 350);
+                }
+            });
+        }
+
+        // "Analyze →" buttons
+        const openAnalysisBtn = document.getElementById('open-analysis-btn');
+        if (openAnalysisBtn) {
+            openAnalysisBtn.addEventListener('click', () => {
+                // Check if any image is displayed on the map
+                const tileLayers = window.mapManager?.tileLayers || {};
+                const hasImage = Object.keys(tileLayers).some(id => id.startsWith('preview-'));
+                if (!hasImage) {
+                    this.showNotification('Display an image first by clicking it in search results', 'warning');
+                    return;
+                }
+                // Trigger processing on the selected/displayed image
+                const imageId = this.selectedImageId || this.currentProcessedImageId;
+                if (!imageId) {
+                    this.showNotification('Select an image first', 'warning');
+                    return;
+                }
+                this.processImage(imageId);
+            });
+        }
+        const localOpenAnalysisBtn = document.getElementById('local-open-analysis-btn');
+        if (localOpenAnalysisBtn) {
+            localOpenAnalysisBtn.addEventListener('click', () => {
+                if (!this.localImage) return;
+                // Delegate to LocalImageController which handles mode checks
+                this.localImage.runLocalAnalysis();
+            });
+        }
+
+        // Compare buttons (dual map)
+        const compareBtn = document.getElementById('compare-btn');
+        if (compareBtn) {
+            compareBtn.addEventListener('click', () => {
+                if (this.dualMapController) this.dualMapController.toggle();
+            });
+        }
+        const localCompareBtn = document.getElementById('local-compare-btn');
+        if (localCompareBtn) {
+            localCompareBtn.addEventListener('click', () => {
+                if (this.dualMapController) this.dualMapController.toggle();
+            });
+        }
+        const exitCompareBtn = document.getElementById('exit-compare-btn');
+        if (exitCompareBtn) {
+            exitCompareBtn.addEventListener('click', () => {
+                if (this.dualMapController) this.dualMapController.deactivate();
             });
         }
 
@@ -233,15 +351,15 @@ class PlatformController {
             searchBtn.addEventListener('click', () => this.searchImages());
         }
 
-        // Change monitoring search
-        const changeSearchBtn = document.getElementById('search-change-images-btn');
-        if (changeSearchBtn) {
-            changeSearchBtn.addEventListener('click', () => {
-                if (this.changeMonitoring) {
-                    this.changeMonitoring.searchChangeImages();
-                }
-            });
-        }
+        // Change monitoring search (disabled)
+        // const changeSearchBtn = document.getElementById('search-change-images-btn');
+        // if (changeSearchBtn) {
+        //     changeSearchBtn.addEventListener('click', () => {
+        //         if (this.changeMonitoring) {
+        //             this.changeMonitoring.searchChangeImages();
+        //         }
+        //     });
+        // }
     }
 
     setupSatelliteTabs() {
@@ -275,6 +393,13 @@ class PlatformController {
             s1Options.classList.remove('hidden');
         }
         
+        // Disable analyze button for S1 (no spectral analysis available)
+        const analyzeBtn = document.getElementById('open-analysis-btn');
+        if (analyzeBtn) {
+            analyzeBtn.disabled = satellite === 's1';
+            analyzeBtn.title = satellite === 's1' ? 'Analysis not available for Sentinel-1' : '';
+        }
+
         console.log(`Switched to satellite: ${satellite}`);
     }
 
@@ -322,6 +447,12 @@ class PlatformController {
 
         // Setup drag-and-drop for band selection
         this.setupBandDragDrop();
+
+        // Percentile sliders
+        this.setupPercentileSliders();
+
+        // Keyboard shortcut mode
+        this.setupKeyboardShortcutMode();
     }
 
     setupBandDragDrop() {
@@ -371,6 +502,199 @@ class PlatformController {
         });
     }
 
+    setupPercentileSliders() {
+        this._initDualRange('s2', 0, 10000);
+        this._initDualRange('s1', -30, 5);
+    }
+
+    _initDualRange(prefix, dataMin, dataMax) {
+        const lowSlider = document.getElementById(`${prefix}-pct-low`);
+        const highSlider = document.getElementById(`${prefix}-pct-high`);
+        const lowInput = document.getElementById(`${prefix}-pct-low-val`);
+        const highInput = document.getElementById(`${prefix}-pct-high-val`);
+        const minHidden = document.getElementById(`${prefix}-min`);
+        const maxHidden = document.getElementById(`${prefix}-max`);
+        if (!lowSlider || !highSlider) return;
+
+        const sync = (source) => {
+            let lo, hi;
+            if (source === 'slider') {
+                lo = parseFloat(lowSlider.value);
+                hi = parseFloat(highSlider.value);
+                if (lo > hi) { lowSlider.value = hi; lo = hi; }
+                if (hi < lo) { highSlider.value = lo; hi = lo; }
+                lowInput.value = lo.toFixed(1);
+                highInput.value = hi.toFixed(1);
+            } else {
+                lo = Math.max(0, Math.min(100, parseFloat(lowInput.value) || 0));
+                hi = Math.max(0, Math.min(100, parseFloat(highInput.value) || 100));
+                if (lo > hi) lo = hi;
+                lowSlider.value = lo;
+                highSlider.value = hi;
+            }
+            const range = dataMax - dataMin;
+            minHidden.value = Math.round(dataMin + range * lo / 100);
+            maxHidden.value = Math.round(dataMin + range * hi / 100);
+        };
+
+        lowSlider.addEventListener('input', () => sync('slider'));
+        highSlider.addEventListener('input', () => sync('slider'));
+        lowInput.addEventListener('change', () => sync('input'));
+        highInput.addEventListener('change', () => sync('input'));
+    }
+
+    setupKeyboardShortcutMode() {
+        const toggle = document.getElementById('keyboard-shortcut-toggle');
+        const slotsContainer = document.getElementById('keyboard-shortcut-slots');
+        if (!toggle || !slotsContainer) return;
+
+        // Toggle handler
+        toggle.addEventListener('change', () => {
+            this.keyboardShortcutMode = toggle.checked;
+            slotsContainer.style.display = toggle.checked ? 'grid' : 'none';
+        });
+
+        // Drag-and-drop for shortcut slots
+        const slots = slotsContainer.querySelectorAll('.shortcut-slot');
+        slots.forEach(slot => {
+            slot.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                slot.classList.add('drag-over');
+            });
+            slot.addEventListener('dragleave', () => {
+                slot.classList.remove('drag-over');
+            });
+            slot.addEventListener('drop', (e) => {
+                e.preventDefault();
+                slot.classList.remove('drag-over');
+                const band = e.dataTransfer.getData('text/plain');
+                if (!band) return;
+                const label = slot.querySelector('.slot-band-label');
+                if (label) {
+                    label.textContent = band;
+                    label.dataset.band = band;
+                }
+                slot.dataset.band = band;
+                this.keyboardShortcutMap[slot.dataset.key] = band;
+            });
+        });
+
+        // Global keydown listener
+        document.addEventListener('keydown', (e) => {
+            if (!this.keyboardShortcutMode) return;
+            // Only when search tab is active
+            const searchTab = document.getElementById('search-tab-content');
+            if (!searchTab || !searchTab.classList.contains('active')) return;
+            const tag = document.activeElement?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (document.activeElement?.isContentEditable) return;
+            if (e.key >= '1' && e.key <= '9') {
+                e.preventDefault();
+                this.applyGrayscaleBand(e.key);
+            }
+            if (e.key === '`' || e.key === '~') {
+                e.preventDefault();
+                this.restoreRGBTiles();
+            }
+        });
+    }
+
+    async applyGrayscaleBand(key) {
+        const band = this.keyboardShortcutMap[key];
+        if (!band) return;
+
+        // Visual feedback on the slot
+        const slot = document.querySelector(`.shortcut-slot[data-key="${key}"]`);
+        if (slot) {
+            slot.classList.add('active-key');
+            setTimeout(() => slot.classList.remove('active-key'), 300);
+        }
+
+        // Get S2 tile layers
+        const tileLayers = window.mapManager?.tileLayers || {};
+        const layerIds = Object.keys(tileLayers).filter(id => {
+            if (id.startsWith('change-preview-')) return false;
+            if (!id.startsWith('preview-')) return false;
+            const imageId = id.replace('preview-', '');
+            return !(imageId.startsWith('S1A_') || imageId.startsWith('S1B_') || imageId.includes('S1_GRD'));
+        });
+
+        if (layerIds.length === 0) {
+            this.showNotification('No S2 images displayed', 'warning');
+            return;
+        }
+
+        const min = parseFloat(document.getElementById('s2-min')?.value) || 0;
+        const max = parseFloat(document.getElementById('s2-max')?.value) || 3000;
+        const aoi = this.getAOI();
+        if (!aoi?.bbox) {
+            this.showNotification('No AOI defined', 'warning');
+            return;
+        }
+
+        this.showNotification(`Band ${band} (key ${key})`, 'info', 2000);
+
+        // Capture original tile URLs before first grayscale switch
+        for (const layerId of layerIds) {
+            if (!this._originalTileUrls[layerId]) {
+                const existingLayer = tileLayers[layerId];
+                if (existingLayer && existingLayer._url) {
+                    this._originalTileUrls[layerId] = {
+                        url: existingLayer._url,
+                        bounds: existingLayer.options.bounds
+                    };
+                }
+            }
+        }
+
+        for (const layerId of layerIds) {
+            const imageId = layerId.replace('preview-', '');
+            try {
+                const response = await fetch('/api/get-s2-tile-custom', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        item_id: imageId,
+                        bbox: aoi.bbox,
+                        geometry: aoi.geometry,
+                        bands: [band, band, band],
+                        min: min,
+                        max: max
+                    })
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.tile_template && window.mapManager) {
+                        window.mapManager.hideTileLayer(layerId);
+                        window.mapManager.showTileLayer(
+                            layerId, data.tile_template, data.bounds,
+                            `Grayscale ${band}: ${imageId}`
+                        );
+                    }
+                }
+            } catch (error) {
+                console.error(`Grayscale band error for ${layerId}:`, error);
+            }
+        }
+    }
+
+    restoreRGBTiles() {
+        if (Object.keys(this._originalTileUrls).length === 0) {
+            this.showNotification('No original RGB to restore', 'warning', 2000);
+            return;
+        }
+        for (const [layerId, original] of Object.entries(this._originalTileUrls)) {
+            if (window.mapManager) {
+                window.mapManager.hideTileLayer(layerId);
+                window.mapManager.showTileLayer(
+                    layerId, original.url, original.bounds,
+                    `RGB: ${layerId.replace('preview-', '')}`
+                );
+            }
+        }
+        this.showNotification('Restored RGB (~)', 'info', 2000);
+    }
+
     async applyVisualizationToAllImages(satellite) {
         const aoi = this.getAOI();
         if (!aoi || !aoi.bbox) {
@@ -417,7 +741,7 @@ class PlatformController {
                 const imageId = layerId.replace('preview-', '');
                 
                 try {
-                    const endpoint = satellite === 's1' ? '/api/get-s1-tile' : '/api/get-gee-tile';
+                    const endpoint = satellite === 's1' ? '/api/get-s1-tile' : '/api/get-s2-tile-custom';
                     const requestBody = {
                         item_id: imageId,
                         bbox: aoi.bbox,
@@ -556,11 +880,11 @@ class PlatformController {
             searchBtn.disabled = !hasAOI;
         }
 
-        // Enable/disable change monitoring search
-        const changeSearchBtn = document.getElementById('search-change-images-btn');
-        if (changeSearchBtn) {
-            changeSearchBtn.disabled = !hasAOI;
-        }
+        // Enable/disable change monitoring search (disabled)
+        // const changeSearchBtn = document.getElementById('search-change-images-btn');
+        // if (changeSearchBtn) {
+        //     changeSearchBtn.disabled = !hasAOI;
+        // }
         
         console.log(`AOI changed: hasAOI=${hasAOI}`);
     }
@@ -960,11 +1284,11 @@ class PlatformController {
     // ===== Change Monitoring =====
 
     startChangeMonitoring(modelId, result, btnElement) {
-        if (this.changeMonitoring) {
-            // Switch to change monitoring tab
-            this.switchToChangeMonitoringTab();
-            this.showNotification('Switch to Change Monitoring tab to continue', 'info');
-        }
+        // Change monitoring disabled
+        // if (this.changeMonitoring) {
+        //     this.switchToChangeMonitoringTab();
+        //     this.showNotification('Switch to Change Monitoring tab to continue', 'info');
+        // }
     }
 
     // ===== Download Methods =====

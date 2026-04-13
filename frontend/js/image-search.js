@@ -232,11 +232,8 @@ class ImageSearchController {
                         </div>
                     </div>
                 ` : `
-                    <button class="process-btn control-btn primary" data-image-id="${image.id}">
-                        🔄 Process
-                    </button>
                     <div class="download-dropdown">
-                        <button class="download-btn control-btn" data-image-id="${image.id}">
+                        <button class="download-btn control-btn primary" data-image-id="${image.id}">
                             ⬇️ Download ▾
                         </button>
                         <div class="download-options hidden">
@@ -256,15 +253,6 @@ class ImageSearchController {
         item.addEventListener('click', () => {
             this.viewImage(image, satellite);
         });
-
-        // Process button handler
-        const processBtn = item.querySelector('.process-btn');
-        if (processBtn) {
-            processBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.selectImage(image.id, satellite);
-            });
-        }
 
         // Download button and dropdown handlers
         const downloadBtn = item.querySelector('.download-btn');

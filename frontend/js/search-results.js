@@ -85,11 +85,8 @@ class SearchResultsController {
                         </div>
                     </div>
                 ` : `
-                    <button class="process-btn control-btn primary" data-image-id="${image.id}">
-                        🔄 Process
-                    </button>
                     <div class="download-dropdown">
-                        <button class="download-btn control-btn" data-image-id="${image.id}">
+                        <button class="download-btn control-btn primary" data-image-id="${image.id}">
                             ⬇️ Download ▾
                         </button>
                         <div class="download-options hidden">
@@ -109,17 +106,9 @@ class SearchResultsController {
             this.platform.selectImage(image.id);
         });
 
-        const processBtn = item.querySelector('.process-btn');
         const downloadBtn = item.querySelector('.download-btn');
         const downloadOptions = item.querySelectorAll('.download-option');
         const downloadDropdown = item.querySelector('.download-dropdown');
-        
-        if (processBtn) {
-            processBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.platform.processImage(image.id);
-            });
-        }
         
         if (downloadBtn && downloadDropdown) {
             downloadBtn.addEventListener('click', (e) => {

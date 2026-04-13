@@ -8,6 +8,11 @@ class CustomVisualizationController {
         this.platform = platformController;
         this.modalElement = null;
         this.vizType = 'composite';
+        // Local mode state
+        this._localMode = false;
+        this._localImageDir = null;
+        this._localAlgoDir = null;
+        this._localBands = [];
     }
 
     /**
@@ -37,9 +42,13 @@ class CustomVisualizationController {
             return;
         }
 
-        if (!this.modalElement) {
-            this.createModal();
+        this._localMode = false;
+        // Rebuild modal if it was previously in local mode
+        if (this.modalElement) {
+            this.modalElement.remove();
+            this.modalElement = null;
         }
+        this.createModal();
         this.modalElement.style.display = 'flex';
     }
 
@@ -50,12 +59,84 @@ class CustomVisualizationController {
         if (this.modalElement) {
             this.modalElement.style.display = 'none';
         }
+        this._localMode = false;
+    }
+
+    /**
+     * Show modal for local image visualization
+     */
+    showLocalModal(imageDir, algoDir, availableBands) {
+        this._localMode = true;
+        this._localImageDir = imageDir;
+        this._localAlgoDir = algoDir;
+        this._localBands = availableBands || [];
+
+        // Remove existing modal to rebuild with local bands
+        if (this.modalElement) {
+            this.modalElement.remove();
+            this.modalElement = null;
+        }
+        this.createModal();
+        this.modalElement.style.display = 'flex';
     }
 
     /**
      * Create the modal element
      */
     createModal() {
+        // Build band options depending on mode
+        let bandOptions;
+        let presetSection;
+        if (this._localMode && this._localBands.length > 0) {
+            bandOptions = this._localBands.map(b => {
+                const label = b.replace('after_', '').replace('.tif', '');
+                return `<option value="${b}">${label}</option>`;
+            }).join('');
+            presetSection = ''; // No presets for local bands
+        } else {
+            bandOptions = `
+                <option value="B4">B4 (Red)</option>
+                <option value="B8">B8 (NIR)</option>
+                <option value="B3">B3 (Green)</option>
+                <option value="B2">B2 (Blue)</option>
+                <option value="B11">B11 (SWIR1)</option>
+                <option value="B12">B12 (SWIR2)</option>
+            `;
+            presetSection = `
+                <div class="preset-buttons">
+                    <button class="btn-preset" data-preset="natural">Natural Color</button>
+                    <button class="btn-preset" data-preset="false-color">False Color IR</button>
+                    <button class="btn-preset" data-preset="swir">SWIR Composite</button>
+                </div>
+            `;
+        }
+
+        const indexPresets = this._localMode ? '' : `
+            <div class="preset-buttons">
+                <button class="btn-preset" data-preset="ndvi">NDVI</button>
+                <button class="btn-preset" data-preset="ndmi">NDMI</button>
+                <button class="btn-preset" data-preset="ndwi">NDWI</button>
+            </div>
+        `;
+
+        // Script tab only for Sentinel-2 mode
+        const scriptTab = this._localMode ? '' : `<button class="viz-type-btn" data-type="script">Script</button>`;
+        const scriptContent = this._localMode ? '' : `
+            <div class="viz-type-content" id="script-content" style="display: none;">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="script-name" value="Custom Script" placeholder="Script name">
+                </div>
+                <div class="form-group">
+                    <label>JavaScript Expression</label>
+                    <textarea id="script-code" rows="6" placeholder="// Example: return [B8, B4, B3];">return [B8, B4, B3];</textarea>
+                </div>
+                <div class="script-help">
+                    <p>Available bands: B2, B3, B4, B8, B11, B12</p>
+                </div>
+            </div>
+        `;
+
         this.modalElement = document.createElement('div');
         this.modalElement.className = 'modal-overlay custom-viz-modal';
         this.modalElement.innerHTML = `
@@ -68,9 +149,9 @@ class CustomVisualizationController {
                     <div class="viz-type-tabs">
                         <button class="viz-type-btn active" data-type="composite">RGB Composite</button>
                         <button class="viz-type-btn" data-type="index">Custom Index</button>
-                        <button class="viz-type-btn" data-type="script">Script</button>
+                        ${scriptTab}
                     </div>
-                    
+
                     <div class="viz-type-content" id="composite-content">
                         <div class="form-group">
                             <label>Name</label>
@@ -78,44 +159,19 @@ class CustomVisualizationController {
                         </div>
                         <div class="form-group">
                             <label>Red Band</label>
-                            <select id="composite-red">
-                                <option value="B4">B4 (Red)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B3">B3 (Green)</option>
-                                <option value="B2">B2 (Blue)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                            </select>
+                            <select id="composite-red">${bandOptions}</select>
                         </div>
                         <div class="form-group">
                             <label>Green Band</label>
-                            <select id="composite-green">
-                                <option value="B3" selected>B3 (Green)</option>
-                                <option value="B4">B4 (Red)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B2">B2 (Blue)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                            </select>
+                            <select id="composite-green">${bandOptions}</select>
                         </div>
                         <div class="form-group">
                             <label>Blue Band</label>
-                            <select id="composite-blue">
-                                <option value="B2" selected>B2 (Blue)</option>
-                                <option value="B4">B4 (Red)</option>
-                                <option value="B3">B3 (Green)</option>
-                                <option value="B8">B8 (NIR)</option>
-                                <option value="B11">B11 (SWIR1)</option>
-                                <option value="B12">B12 (SWIR2)</option>
-                            </select>
+                            <select id="composite-blue">${bandOptions}</select>
                         </div>
-                        <div class="preset-buttons">
-                            <button class="btn-preset" data-preset="natural">Natural Color</button>
-                            <button class="btn-preset" data-preset="false-color">False Color IR</button>
-                            <button class="btn-preset" data-preset="swir">SWIR Composite</button>
-                        </div>
+                        ${presetSection}
                     </div>
-                    
+
                     <div class="viz-type-content" id="index-content" style="display: none;">
                         <div class="form-group">
                             <label>Name</label>
@@ -127,25 +183,11 @@ class CustomVisualizationController {
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Band A</label>
-                                <select id="index-band-a">
-                                    <option value="B8" selected>B8 (NIR)</option>
-                                    <option value="B4">B4 (Red)</option>
-                                    <option value="B3">B3 (Green)</option>
-                                    <option value="B2">B2 (Blue)</option>
-                                    <option value="B11">B11 (SWIR1)</option>
-                                    <option value="B12">B12 (SWIR2)</option>
-                                </select>
+                                <select id="index-band-a">${bandOptions}</select>
                             </div>
                             <div class="form-group">
                                 <label>Band B</label>
-                                <select id="index-band-b">
-                                    <option value="B4" selected>B4 (Red)</option>
-                                    <option value="B8">B8 (NIR)</option>
-                                    <option value="B3">B3 (Green)</option>
-                                    <option value="B2">B2 (Blue)</option>
-                                    <option value="B11">B11 (SWIR1)</option>
-                                    <option value="B12">B12 (SWIR2)</option>
-                                </select>
+                                <select id="index-band-b">${bandOptions}</select>
                             </div>
                         </div>
                         <div class="form-group">
@@ -158,26 +200,10 @@ class CustomVisualizationController {
                                 <option value="coolwarm">Cool-Warm</option>
                             </select>
                         </div>
-                        <div class="preset-buttons">
-                            <button class="btn-preset" data-preset="ndvi">NDVI</button>
-                            <button class="btn-preset" data-preset="ndmi">NDMI</button>
-                            <button class="btn-preset" data-preset="ndwi">NDWI</button>
-                        </div>
+                        ${indexPresets}
                     </div>
-                    
-                    <div class="viz-type-content" id="script-content" style="display: none;">
-                        <div class="form-group">
-                            <label>Name</label>
-                            <input type="text" id="script-name" value="Custom Script" placeholder="Script name">
-                        </div>
-                        <div class="form-group">
-                            <label>JavaScript Expression</label>
-                            <textarea id="script-code" rows="6" placeholder="// Example: return [B8, B4, B3];">return [B8, B4, B3];</textarea>
-                        </div>
-                        <div class="script-help">
-                            <p>Available bands: B2, B3, B4, B8, B11, B12</p>
-                        </div>
-                    </div>
+
+                    ${scriptContent}
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" id="cancel-custom-viz">Cancel</button>
@@ -288,12 +314,6 @@ class CustomVisualizationController {
      * Apply the custom visualization
      */
     async applyVisualization() {
-        const imageInfo = this.getImageInfo();
-        if (!imageInfo) {
-            this.platform.showNotification('No processed image available', 'warning');
-            return;
-        }
-
         let customViz = {};
         let customName = '';
 
@@ -331,24 +351,47 @@ class CustomVisualizationController {
         this.platform.showLoading('Creating custom visualization...');
 
         try {
-            const response = await fetch('/api/custom-visualization', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            let endpoint, requestBody;
+
+            if (this._localMode) {
+                endpoint = '/api/local/custom-visualization';
+                requestBody = {
+                    image_dir: this._localImageDir,
+                    algorithm_dir: this._localAlgoDir,
+                    custom_visualization: customViz,
+                    custom_name: customName
+                };
+            } else {
+                const imageInfo = this.getImageInfo();
+                if (!imageInfo) {
+                    this.platform.hideLoading();
+                    this.platform.showNotification('No processed image available', 'warning');
+                    return;
+                }
+                endpoint = '/api/custom-visualization';
+                requestBody = {
                     image_id: imageInfo.id,
                     bbox: imageInfo.bbox,
                     geometry: imageInfo.geometry,
                     custom_visualization: customViz,
                     custom_name: customName
-                })
+                };
+            }
+
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
             });
 
             if (!response.ok) throw new Error(`Failed: ${response.status}`);
             const result = await response.json();
 
-            // Add result to analysis list using platform's method
-            if (this.platform.addCustomVisualizationResult) {
-                this.platform.addCustomVisualizationResult(result);
+            // Add result to correct analysis list
+            if (this._localMode && this.platform.localImage) {
+                this.platform.localImage.addLocalCustomVizResult(result);
+            } else if (this.platform.imageProcessorController) {
+                this.platform.imageProcessorController.addCustomVisualizationResult(result);
             }
 
             this.platform.hideLoading();

@@ -95,6 +95,30 @@
         <div id="map"></div>
     </div>
 
+    <!-- Secondary Map Container (Compare Mode) -->
+    <div id="map-container-right" class="map-container-split" style="display:none;">
+        <div id="map-right"></div>
+    </div>
+
+    <!-- Dual Map Controls Overlay -->
+    <div id="dual-map-controls" class="dual-map-controls" style="display:none;">
+        <div class="dual-map-header">
+            <span class="dual-map-title">Compare Mode</span>
+            <button id="exit-compare-btn" class="control-btn secondary small">✕ Exit</button>
+        </div>
+        <div class="dual-map-columns">
+            <div class="dual-map-column">
+                <h4>Left Map</h4>
+                <div id="left-map-layers" class="dual-layer-list"></div>
+            </div>
+            <div class="dual-map-divider"></div>
+            <div class="dual-map-column">
+                <h4>Right Map</h4>
+                <div id="right-map-layers" class="dual-layer-list"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Top Header Bar -->
     <div id="header-bar">
         <div class="header-left">
@@ -107,6 +131,7 @@
 
     <!-- Left Control Panel with Tabs -->
     <div id="control-panel" class="panel">
+        <button id="panel-toggle-btn" class="panel-edge-toggle left-edge-toggle" title="Hide panel">◀</button>
         <div class="panel-header">
             <h3>🎯 Mangrove Analysis</h3>
         </div>
@@ -114,9 +139,9 @@
         <!-- Tab Navigation -->
         <div class="tab-navigation">
             <button class="tab-btn active" data-tab="search">🛰️ Satellite Search</button>
-            <button class="tab-btn" data-tab="analysis" id="analysis-tab">📊 Analysis Results</button>
-            <button class="tab-btn" data-tab="change-monitoring" id="change-monitoring-tab">📈 Change
-                Monitoring</button>
+            <button class="tab-btn" data-tab="local-image" id="local-image-tab">📁 Local Image</button>
+            <!-- <button class="tab-btn" data-tab="analysis" id="analysis-tab">📊 Analysis Results</button> -->
+            <!-- <button class="tab-btn" data-tab="change-monitoring" id="change-monitoring-tab">📈 Change Monitoring</button> -->
         </div>
 
         <div class="panel-content">
@@ -178,6 +203,12 @@
                     </div>
                 </div>
 
+                <div class="control-group">
+                    <button id="search-btn" class="control-btn primary large" disabled>
+                        🔍 Search Satellite Images
+                    </button>
+                </div>
+
                 <div class="control-group satellite-selector">
                     <label>Satellite:</label>
                     <div class="satellite-buttons">
@@ -221,13 +252,38 @@
                             </div>
                         </div>
                     </div>
-                    <div class="param-row" style="margin-top: 8px;">
-                        <label>Min:</label>
-                        <input type="number" id="s2-min" value="0" class="number-input" style="width: 55px;">
-                        <label>Max:</label>
-                        <input type="number" id="s2-max" value="3000" class="number-input" style="width: 55px;">
+                    <div class="percentile-stretch">
+                        <div class="dual-range-header">
+                            <span>Percentile Stretch</span>
+                            <span class="dual-range-values"><input type="number" id="s2-pct-low-val" class="pct-input" value="0.0" min="0" max="100" step="0.1">% — <input type="number" id="s2-pct-high-val" class="pct-input" value="100.0" min="0" max="100" step="0.1">%</span>
+                        </div>
+                        <div class="dual-range-wrap">
+                            <input type="range" id="s2-pct-low" min="0" max="100" value="0" step="0.1" class="dual-range dual-range-low">
+                            <input type="range" id="s2-pct-high" min="0" max="100" value="100" step="0.1" class="dual-range dual-range-high">
+                        </div>
                     </div>
+                    <input type="hidden" id="s2-min" value="0">
+                    <input type="hidden" id="s2-max" value="3000">
                     <button id="apply-s2-vis" class="control-btn primary apply-vis-btn">Apply</button>
+
+                    <!-- Keyboard Shortcut Mode -->
+                    <div class="keyboard-shortcut-section">
+                        <label class="shortcut-toggle-label">
+                            <input type="checkbox" id="keyboard-shortcut-toggle">
+                            Keyboard Shortcut Mode
+                        </label>
+                        <div id="keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
+                            <div class="shortcut-slot" data-key="1" data-band="B2"><span class="slot-key">1</span><span class="slot-band-label" data-band="B2">B2</span></div>
+                            <div class="shortcut-slot" data-key="2" data-band="B3"><span class="slot-key">2</span><span class="slot-band-label" data-band="B3">B3</span></div>
+                            <div class="shortcut-slot" data-key="3" data-band="B4"><span class="slot-key">3</span><span class="slot-band-label" data-band="B4">B4</span></div>
+                            <div class="shortcut-slot" data-key="4" data-band="B5"><span class="slot-key">4</span><span class="slot-band-label" data-band="B5">B5</span></div>
+                            <div class="shortcut-slot" data-key="5" data-band="B6"><span class="slot-key">5</span><span class="slot-band-label" data-band="B6">B6</span></div>
+                            <div class="shortcut-slot" data-key="6" data-band="B7"><span class="slot-key">6</span><span class="slot-band-label" data-band="B7">B7</span></div>
+                            <div class="shortcut-slot" data-key="7" data-band="B8"><span class="slot-key">7</span><span class="slot-band-label" data-band="B8">B8</span></div>
+                            <div class="shortcut-slot" data-key="8" data-band="B8A"><span class="slot-key">8</span><span class="slot-band-label" data-band="B8A">B8A</span></div>
+                            <div class="shortcut-slot" data-key="9" data-band="B11"><span class="slot-key">9</span><span class="slot-band-label" data-band="B11">B11</span></div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Sentinel-1 Channel Selection (hidden by default) -->
@@ -253,18 +309,30 @@
                             </div>
                         </div>
                     </div>
-                    <div class="param-row" style="margin-top: 8px;">
-                        <label>Min:</label>
-                        <input type="number" id="s1-min" value="-25" class="number-input" style="width: 55px;">
-                        <label>Max:</label>
-                        <input type="number" id="s1-max" value="0" class="number-input" style="width: 55px;">
+                    <div class="percentile-stretch">
+                        <div class="dual-range-header">
+                            <span>Percentile Stretch</span>
+                            <span class="dual-range-values"><input type="number" id="s1-pct-low-val" class="pct-input" value="0.0" min="0" max="100" step="0.1">% — <input type="number" id="s1-pct-high-val" class="pct-input" value="100.0" min="0" max="100" step="0.1">%</span>
+                        </div>
+                        <div class="dual-range-wrap">
+                            <input type="range" id="s1-pct-low" min="0" max="100" value="0" step="0.1" class="dual-range dual-range-low">
+                            <input type="range" id="s1-pct-high" min="0" max="100" value="100" step="0.1" class="dual-range dual-range-high">
+                        </div>
                     </div>
+                    <input type="hidden" id="s1-min" value="-25">
+                    <input type="hidden" id="s1-max" value="0">
                     <button id="apply-s1-vis" class="control-btn primary apply-vis-btn">Apply</button>
                 </div>
 
-                <div class="control-group">
-                    <button id="search-btn" class="control-btn primary large" disabled>
-                        🔍 Search Satellite Images
+                <div class="control-group analyze-btn-group">
+                    <button id="open-analysis-btn" class="control-btn primary large">
+                        📊 Analyze →
+                    </button>
+                </div>
+
+                <div class="control-group compare-btn-group">
+                    <button id="compare-btn" class="control-btn secondary large" disabled>
+                        🔀 Compare Layers
                     </button>
                 </div>
 
@@ -287,106 +355,191 @@
                 </div>
             </div>
 
-            <!-- Analysis Tab Content -->
+            <!-- Local Image Tab Content -->
+            <div id="local-image-tab-content" class="tab-content">
+                <!-- Mode Toggle -->
+                <div class="control-group local-mode-toggle">
+                    <div class="satellite-buttons">
+                        <button class="satellite-btn local-mode-btn active" data-mode="load-image">
+                            📂 Load Image
+                        </button>
+                        <button class="satellite-btn local-mode-btn" data-mode="band-registration">
+                            🔧 Band Registration
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Load Image Mode (NEW) -->
+                <div id="load-image-mode" class="local-mode-panel">
+                    <div class="control-group">
+                        <label>Upload GeoTIFF:</label>
+                        <div class="geotiff-drop-zone" id="geotiff-drop-zone">
+                            <input type="file" id="geotiff-file-input" accept=".tif,.tiff" style="display:none">
+                            <div class="geotiff-drop-content">
+                                <span class="drop-icon">🗺️</span>
+                                <span class="drop-text">Drop GeoTIFF here</span>
+                                <span class="drop-subtext">or <a href="#" id="geotiff-browse-link">browse</a> (.tif)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="uploaded-image-info" style="display:none;">
+                        <div class="control-group uploaded-meta">
+                            <div class="meta-row"><span class="meta-label">File:</span> <span id="uploaded-filename"></span></div>
+                            <div class="meta-row"><span class="meta-label">CRS:</span> <span id="uploaded-crs"></span></div>
+                            <div class="meta-row"><span class="meta-label">Bands:</span> <span id="uploaded-band-count"></span></div>
+                            <div class="meta-row"><span class="meta-label">Size:</span> <span id="uploaded-size"></span></div>
+                            <button id="remove-uploaded-image" class="control-btn secondary small">🗑️ Remove</button>
+                        </div>
+                        <!-- Band Role Mapping -->
+                        <div id="band-role-mapping" class="control-group">
+                            <label>Band Roles (for analysis):</label>
+                            <div class="band-role-grid" id="band-role-grid">
+                                <!-- Dynamically populated -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Band Registration Mode (existing) -->
+                <div id="band-registration-mode" class="local-mode-panel" style="display:none;">
+                    <div class="control-group">
+                        <label>Image:</label>
+                        <select id="local-image-select" class="select-input">
+                            <option value="">-- Select Image --</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Algorithm:</label>
+                        <select id="local-algo-select" class="select-input" disabled>
+                            <option value="">-- Select Algorithm --</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Shared Band Controls (used by both modes) -->
+                <div id="local-band-controls" class="control-group" style="display:none;">
+                    <label>Drag bands to RGB:</label>
+                    <div class="band-dnd-container">
+                        <div class="band-pool" id="local-band-pool">
+                            <!-- Band chips populated dynamically -->
+                        </div>
+                        <div class="rgb-slots">
+                            <div class="rgb-slot r-slot" data-channel="R" id="local-slot-r">
+                                <span class="slot-label">R</span>
+                                <span class="slot-band" data-band="">-</span>
+                            </div>
+                            <div class="rgb-slot g-slot" data-channel="G" id="local-slot-g">
+                                <span class="slot-label">G</span>
+                                <span class="slot-band" data-band="">-</span>
+                            </div>
+                            <div class="rgb-slot b-slot" data-channel="B" id="local-slot-b">
+                                <span class="slot-label">B</span>
+                                <span class="slot-band" data-band="">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="percentile-stretch">
+                        <div class="dual-range-header">
+                            <span>Percentile Stretch</span>
+                            <span class="dual-range-values"><input type="number" id="local-pct-low-val" class="pct-input" value="2.0" min="0" max="100" step="0.1">% — <input type="number" id="local-pct-high-val" class="pct-input" value="98.0" min="0" max="100" step="0.1">%</span>
+                        </div>
+                        <div class="dual-range-wrap">
+                            <input type="range" id="local-pct-low" min="0" max="100" value="2" step="0.1" class="dual-range dual-range-low">
+                            <input type="range" id="local-pct-high" min="0" max="100" value="98" step="0.1" class="dual-range dual-range-high">
+                        </div>
+                    </div>
+                    <input type="hidden" id="local-min" value="0">
+                    <input type="hidden" id="local-max" value="3000">
+                    <button id="apply-local-vis" class="control-btn primary apply-vis-btn">Apply</button>
+
+                    <!-- Keyboard Shortcut Mode for local -->
+                    <div class="keyboard-shortcut-section">
+                        <label class="shortcut-toggle-label">
+                            <input type="checkbox" id="local-keyboard-shortcut-toggle">
+                            Keyboard Shortcut Mode
+                        </label>
+                        <div id="local-keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
+                            <!-- Populated dynamically based on available bands -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-group analyze-btn-group">
+                    <button id="local-open-analysis-btn" class="control-btn primary large" disabled>
+                        📊 Analyze →
+                    </button>
+                </div>
+
+                <div class="control-group compare-btn-group">
+                    <button id="local-compare-btn" class="control-btn secondary large" disabled>
+                        🔀 Compare Layers
+                    </button>
+                </div>
+            </div>
+
+            <!-- Analysis Tab Content (moved to right panel) -->
+            <!--
             <div id="analysis-tab-content" class="tab-content">
                 <div class="analysis-list">
                     <div class="no-analysis-results">
                         <div class="empty-state-icon">📊</div>
                         <h4 class="empty-state-title">No Analysis Results</h4>
-                        <p class="empty-state-message">Select an image and click "Process Image" to see analysis results
-                            here.</p>
+                        <p class="empty-state-message">Select an image and click "Process Image" to see analysis results here.</p>
                     </div>
                 </div>
             </div>
+            -->
 
-            <!-- Change Monitoring Tab Content -->
-            <div id="change-monitoring-tab-content" class="tab-content">
-                <!-- Date Range Selection -->
-                <div class="control-group">
-                    <label>Search Period:</label>
-                    <div class="search-params">
-                        <div class="param-row">
-                            <label for="change-start-date">Start Date:</label>
-                            <input type="date" id="change-start-date" class="date-input">
-                        </div>
-                        <div class="param-row">
-                            <label for="change-end-date">End Date:</label>
-                            <input type="date" id="change-end-date" class="date-input">
-                        </div>
-                        <div class="param-row">
-                            <label for="change-cloud-cover">Max Cloud Cover:</label>
-                            <input type="range" id="change-cloud-cover" min="0" max="100" value="30" class="slider">
-                            <span id="change-cloud-cover-value">30%</span>
-                        </div>
-                        <div class="param-row">
-                            <label for="change-aoi-coverage">Min AOI Coverage:</label>
-                            <input type="range" id="change-aoi-coverage" min="0" max="100" value="0" class="slider">
-                            <span id="change-aoi-coverage-value">0%</span>
-                        </div>
+            <!-- Change Monitoring Tab Content (disabled) -->
+        </div>
+
+        <!-- Layer Control Panel (shared across tabs, fixed at bottom of panel) -->
+        <div id="layer-control-section" class="layer-control-section" style="display:none;">
+            <div class="layer-control-header">
+                <span class="layer-control-title">Layers</span>
+                <button id="layer-control-toggle" class="layer-section-toggle">▼</button>
+            </div>
+            <div id="layer-list" class="layer-list"></div>
+        </div>
+    </div>
+
+    <!-- Right Panel: Analysis & Spectral Inspector -->
+    <div id="right-panel" class="panel right-panel" style="display:none;">
+        <button id="right-panel-toggle-btn" class="panel-edge-toggle right-edge-toggle" title="Hide panel">▶</button>
+        <div class="panel-header right-panel-header">
+            <h3>Analysis & Inspection</h3>
+        </div>
+        <div class="tab-navigation right-tab-navigation">
+            <button class="right-tab-btn active" data-right-tab="analysis">📊 Analysis</button>
+            <button class="right-tab-btn" data-right-tab="spectral-inspector">🔬 Spectral Inspector</button>
+        </div>
+        <div class="right-panel-content">
+            <div id="right-analysis-tab-content" class="right-tab-content active">
+                <div class="analysis-list">
+                    <div class="no-analysis-results">
+                        <div class="empty-state-icon">📊</div>
+                        <h4 class="empty-state-title">No Analysis Results</h4>
+                        <p class="empty-state-message">Process an image to see results here.</p>
                     </div>
                 </div>
-
-                <!-- Spectral Analysis Method Selection -->
-                <div class="control-group">
-                    <label for="spectral-method">Spectral Analysis Method:</label>
-                    <select id="spectral-method" class="form-select">
-                        <option value="ndvi">NDVI (Normalized Difference Vegetation Index)</option>
-                        <option value="ndmi">NDMI (Normalized Difference Moisture Index)</option>
-                        <option value="mvi">MVI (Mangrove Vegetation Index)</option>
-                    </select>
-                </div>
-
-                <!-- Search Button -->
-                <div class="control-group">
-                    <button id="search-change-images-btn" class="control-btn primary large" disabled>
-                        🔍 Search Available Images
-                    </button>
-                </div>
-
-                <!-- Calendar Results (hidden until search) -->
-                <div id="change-calendar-results" class="change-calendar-results hidden">
-                    <h3>📅 Available Images</h3>
-                    <div class="results-info-row">
-                        <p class="results-info">
-                            <span id="change-selected-count">0</span> images selected.
-                        </p>
-                        <button id="select-all-dates-btn" class="control-btn secondary small">
-                            ✓ Select All
-                        </button>
-                    </div>
-
-                    <!-- Calendar Grid -->
-                    <div id="change-calendar-grid" class="change-calendar-grid">
-                        <!-- Calendar will be populated here -->
-                    </div>
-
-                    <!-- Run Analysis Button -->
+            </div>
+            <div id="right-spectral-inspector-tab-content" class="right-tab-content">
+                <div class="spectral-inspector">
                     <div class="control-group">
-                        <button id="run-change-analysis-btn" class="control-btn primary large" disabled>
-                            📊 Run Time Series Analysis
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Analysis Results (hidden until analysis complete) -->
-                <div id="change-analysis-results" class="change-analysis-results hidden">
-                    <div class="analysis-header">
-                        <h3>📈 Time Series Analysis</h3>
-                        <button id="download-csv-btn" class="control-btn secondary">
-                            📥 Download CSV
-                        </button>
-                    </div>
-                    <div id="change-chart-container">
-                        <canvas id="change-time-series-chart"></canvas>
-                    </div>
-                    
-                    <!-- Analyzed Images List -->
-                    <div class="analyzed-images-section">
-                        <h4>🗓️ Analyzed Images</h4>
-                        <div id="analyzed-images-list" class="analyzed-images-list">
-                            <!-- Analyzed images will be populated here -->
+                        <label>Inspection Tool:</label>
+                        <div class="spectral-tool-buttons">
+                            <button id="spectral-point-tool" class="control-btn secondary">📍 Point</button>
+                            <button id="spectral-area-tool" class="control-btn secondary">⬜ Area</button>
                         </div>
                     </div>
+                    <div class="control-group">
+                        <button id="spectral-clear-btn" class="control-btn secondary small">🗑️ Clear All</button>
+                    </div>
+                    <div id="spectral-status" class="spectral-status">Select a tool and click on the map.</div>
+                    <div id="spectral-combined-container" class="spectral-chart-container spectral-combined" style="display:none;">
+                        <canvas id="spectral-combined-chart"></canvas>
+                    </div>
+                    <div id="spectral-entries" class="spectral-entries-list"></div>
                 </div>
             </div>
         </div>
@@ -602,6 +755,13 @@
     <script src="/static/js/custom-visualization.js"></script>
     <script src="/static/js/threshold-controller.js"></script>
     <script src="/static/js/target-detection.js"></script>
+    <script src="/static/js/mangrove-segmentation-controller.js"></script>
+    <script src="/static/js/sam2-controller.js"></script>
+    <script src="/static/js/spectral-analysis-controller.js"></script>
+    <script src="/static/js/local-image-controller.js"></script>
+    <script src="/static/js/spectral-inspector.js"></script>
+    <script src="/static/js/layer-control-panel.js"></script>
+    <script src="/static/js/dual-map-controller.js"></script>
     <script src="/static/script.js"></script>
 
     <script>

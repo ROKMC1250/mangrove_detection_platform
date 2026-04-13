@@ -29,6 +29,7 @@ from .core.progress import PROGRESS_TRACKER
 # Initialize Earth Engine
 from .services.earth_engine import init_earth_engine
 from .services.model_inference import init_model1, get_model1_status
+from .services.sam2_service import init_sam2, get_sam2_status
 
 # Import API routers
 from .api import (
@@ -38,6 +39,9 @@ from .api import (
     download_router,
 )
 from .api.routes_target_detection import router as target_detection_router
+from .api.routes_mangrove_segmentation import router as mangrove_segmentation_router
+from .api.routes_local import router as local_router
+from .api.routes_sam2 import router as sam2_router
 
 
 # Initialize Earth Engine at module load
@@ -73,6 +77,9 @@ app.include_router(process_router)
 app.include_router(analysis_router)
 app.include_router(download_router)
 app.include_router(target_detection_router)
+app.include_router(mangrove_segmentation_router)
+app.include_router(local_router)
+app.include_router(sam2_router)
 
 
 # ===== Core Endpoints =====
@@ -213,6 +220,17 @@ async def on_startup():
     except Exception as e:
         print(f"⚠️  STARTUP - Model initialization error: {e}")
         print("   Continuing without segmentation model - other features are still available")
+
+    # Initialize SAM2 model
+    try:
+        sam2_loaded = init_sam2()
+        if sam2_loaded:
+            print("✅ SAM2 model loaded successfully")
+        else:
+            print("⚠️  SAM2 model not available - continuing without it")
+    except Exception as e:
+        print(f"⚠️  STARTUP - SAM2 initialization error: {e}")
+        print("   Continuing without SAM2 - other features are still available")
 
 
 # ===== Health Check =====

@@ -1,0 +1,33 @@
+data:
+  root_dir: datasets/GEE/sentinel-2_harmonized_MVI_split
+model:
+  args:
+    classes: 1
+    encoder_name: mit_b2
+    encoder_weights: null
+    in_channels: 13
+  name: Segformer
+train:
+  batch_size: 32
+  epoch: 50
+  learning_rate: 0.0005
+  log_dir: logs
+  log_image_interval: 200
+  loss:
+    bce_weight: 2.0
+    name: DiceBCE
+  n_workers: 4
+  no_ddp: true
+  no_save: false
+  optimizer:
+    args:
+      weight_decay: 0.01
+    name: AdamW
+  patience: -1
+  scheduler:
+    args:
+      T_0: 10
+      eta_min: 1.0e-06
+    name: CosineAnnealingWarmRestarts
+  seed: 42
+  uid: segformer_MVI_v1

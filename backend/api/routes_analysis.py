@@ -15,11 +15,13 @@ import io as pyio
 import requests
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from .schemas import (
     CustomVisualizationRequest,
     PixelValueRequest,
     ThresholdRangeRequest,
+    ComputeSpectralIndexRequest,
 )
 from ..core.config import PROJECT_ROOT, OUTPUTS_DIR
 from ..services.earth_engine import bbox_to_geometry
@@ -32,7 +34,15 @@ from ..services.visualization import (
     to_png_bytes,
     generate_overlay_path,
 )
-from ..services.spectral_analysis import safe_divide
+from ..services.spectral_analysis import (
+    safe_divide,
+    calculate_spectral_index,
+    calculate_custom_normalized_index,
+    calculate_savi,
+    calculate_evi,
+    get_band_data_from_raster,
+    INDEX_REGISTRY,
+)
 from ..utils.cache import (
     get_cached_raster_path,
     get_pixel_value_from_cache,
@@ -108,12 +118,11 @@ def _create_rgb_composite(custom_viz: Dict, image_id: str, bbox: List[float]) ->
     
     preview_data = to_png_bytes(rgb_composite)
     
-    overlay_png_path = generate_overlay_path("rgb_composite_overlay")
-    Image.fromarray(aoi_rgb, mode='RGB').save(overlay_png_path, format='PNG')
-    
+    from ..services.gpu_compute import rgb_mask_to_base64_gpu
+    overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
+
     preview_b64 = base64.b64encode(preview_data).decode('utf-8')
     preview_url = f"data:image/png;base64,{preview_b64}"
-    overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + overlay_png_path)}"
     
     return {
         'name': f'RGB Composite ({"-".join(converted_bands)})',
@@ -209,12 +218,11 @@ def _create_index_visualization(custom_viz: Dict, image_id: str, bbox: List[floa
         preview_img.save(preview_buf, format='PNG')
         preview_data = preview_buf.getvalue()
         
-        overlay_png_path = generate_overlay_path("index_overlay")
-        save_rgba_overlay_png(aoi_rgb, aoi_mask, overlay_png_path)
-        
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+        overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
+
         preview_b64 = base64.b64encode(preview_data).decode('utf-8')
         preview_url = f"data:image/png;base64,{preview_b64}"
-        overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + overlay_png_path)}"
         
         return {
             'name': f'Index ({converted_band_a}-{converted_band_b})/({converted_band_a}+{converted_band_b})',
@@ -303,6 +311,165 @@ def create_custom_visualization(req: CustomVisualizationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/available-indices")
+def get_available_indices():
+    """Return all supported spectral indices."""
+    return {k: {'name': v['name'], 'full_name': v.get('full_name', v['name']),
+                'formula': v.get('formula', ''), 'bands': v['bands']}
+            for k, v in INDEX_REGISTRY.items()}
+
+
+@router.post("/compute-spectral-index")
+def compute_spectral_index(req: ComputeSpectralIndexRequest):
+    """Compute a spectral index on-demand from cached raster data."""
+    try:
+        index_type = req.index_type.lower()
+        print(f"SPECTRAL INDEX - Computing {index_type} for {req.image_id}")
+
+        cache_key = bbox_to_cache_key(req.image_id, req.bbox)
+        with RASTER_CACHE_LOCK:
+            cached_raster_path = RASTER_FILE_CACHE.get(cache_key)
+
+        if not cached_raster_path or not os.path.exists(cached_raster_path):
+            raise HTTPException(status_code=400,
+                                detail="No cached raster data found. Please process the image first.")
+
+        with rasterio.open(cached_raster_path) as src:
+            data = src.read().astype(np.float32)
+            src_transform = src.transform
+            src_crs = src.crs
+            n_bands = src.count
+
+        # Build band dict from raster (band order: B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12 for 10-band)
+        # Or B1,B2,...,B12,mask for 13-band from process-image
+        band_names_10 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
+        band_names_13 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12', 'mask']
+
+        if n_bands >= 13:
+            band_dict = {name: data[i] for i, name in enumerate(band_names_13) if name != 'mask'}
+            mask_band = data[12]
+            mask_bool = mask_band > 0
+        elif n_bands >= 10:
+            band_dict = {name: data[i] for i, name in enumerate(band_names_10)}
+            mask_bool = np.ones(data.shape[1:], dtype=bool)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unexpected band count: {n_bands}")
+
+        # Apply mask
+        def apply_mask(arr):
+            res = arr.copy()
+            res[~mask_bool] = np.nan
+            return res
+
+        if index_type == 'custom':
+            if not req.band_a or not req.band_b:
+                raise HTTPException(status_code=400, detail="band_a and band_b required for custom index")
+            a_data = apply_mask(band_dict.get(req.band_a, band_dict.get(req.band_a.replace('B0', 'B'), data[0])))
+            b_data = apply_mask(band_dict.get(req.band_b, band_dict.get(req.band_b.replace('B0', 'B'), data[1])))
+            index = safe_divide(a_data - b_data, a_data + b_data)
+            colormap_name = req.colormap or 'viridis'
+            vmin, vmax = -1.0, 1.0
+            label = f'{req.band_a}-{req.band_b} Index'
+            index_name = f'Custom ({req.band_a}/{req.band_b})'
+        elif index_type in INDEX_REGISTRY:
+            info = INDEX_REGISTRY[index_type]
+            colormap_name = req.colormap or info['colormap']
+            vmin = info.get('vmin')
+            vmax = info.get('vmax')
+            label = info['name']
+            index_name = info['name']
+
+            if index_type == 'ndvi':
+                index = safe_divide(apply_mask(band_dict['B8']) - apply_mask(band_dict['B4']),
+                                    apply_mask(band_dict['B8']) + apply_mask(band_dict['B4']))
+            elif index_type == 'ndmi':
+                index = safe_divide(apply_mask(band_dict['B8']) - apply_mask(band_dict['B12']),
+                                    apply_mask(band_dict['B8']) + apply_mask(band_dict['B12']))
+            elif index_type == 'mvi':
+                index = safe_divide(apply_mask(band_dict['B8']) - apply_mask(band_dict['B3']),
+                                    apply_mask(band_dict['B11']) - apply_mask(band_dict['B3']))
+            elif index_type == 'ndwi':
+                index = safe_divide(apply_mask(band_dict['B3']) - apply_mask(band_dict['B8']),
+                                    apply_mask(band_dict['B3']) + apply_mask(band_dict['B8']))
+            elif index_type == 'savi':
+                index = calculate_savi(apply_mask(band_dict['B8']), apply_mask(band_dict['B4']))
+            elif index_type == 'evi':
+                index = calculate_evi(apply_mask(band_dict['B8']), apply_mask(band_dict['B4']),
+                                      apply_mask(band_dict['B2']))
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown index: {index_type}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown index type: {index_type}")
+
+        # Visualization
+        index_rgb, actual_min, actual_max = create_index_visualization(index, colormap_name, vmin, vmax)
+        finite_mask = np.isfinite(index) & mask_bool
+
+        # Cache index data for pixel inspection and thresholding
+        custom_id = f"spectral-{index_type}-{int(time.time() * 1000)}"
+        with INDEX_CACHE_LOCK:
+            INDEX_DATA_CACHE[custom_id] = {
+                'data': index,
+                'transform': src_transform,
+                'crs': src_crs,
+                'bbox': req.bbox
+            }
+
+        min_lon, min_lat, max_lon, max_lat = req.bbox
+
+        aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
+            index_rgb, finite_mask, src_transform, src_crs,
+            (min_lon, min_lat, max_lon, max_lat), scale_m=10,
+            geometry=req.geometry
+        )
+
+        # Preview thumbnail
+        rgba_preview = np.zeros((*index_rgb.shape[:2], 4), dtype=np.uint8)
+        rgba_preview[:, :, :3] = index_rgb
+        rgba_preview[:, :, 3] = 255
+        rgba_preview[~finite_mask, 3] = 0
+
+        preview_img = Image.fromarray(rgba_preview, mode='RGBA')
+        preview_img.thumbnail((512, 512), Image.LANCZOS)
+        preview_buf = pyio.BytesIO()
+        preview_img.save(preview_buf, format='PNG')
+        preview_b64 = base64.b64encode(preview_buf.getvalue()).decode('utf-8')
+        preview_url = f"data:image/png;base64,{preview_b64}"
+
+        # Overlay
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+        overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
+
+        print(f"SPECTRAL INDEX - {index_name} computed. Range: [{actual_min:.3f}, {actual_max:.3f}]")
+
+        return {
+            'name': index_name,
+            'index_type': index_type,
+            'preview_url': preview_url,
+            'overlay_url': overlay_url,
+            'model_id': custom_id,
+            'colormap': {
+                'name': colormap_name,
+                'min_val': float(actual_min),
+                'max_val': float(actual_max),
+                'label': label,
+            },
+            'overlay_meta': {
+                'width': int(aoi_w),
+                'height': int(aoi_h),
+                'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error computing spectral index: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/get-pixel-value")
 def get_pixel_value(req: PixelValueRequest):
     """Get pixel value at specific coordinates from cached data."""
@@ -324,9 +491,38 @@ def get_pixel_value(req: PixelValueRequest):
                 available_keys = list(INDEX_DATA_CACHE.keys())
                 print(f"PIXEL VALUE - Looking for {req.model_id}, available keys: {available_keys}")
             
-        elif req.model_id.startswith('custom-result-'):
+        elif req.model_id.startswith('custom-result-') or req.model_id.startswith('spectral-'):
             cache_key = req.model_id
-        
+
+        elif req.model_id.startswith('td-'):
+            # Target detection results — look up in TARGET_DETECTION_CACHE
+            from .routes_target_detection import TARGET_DETECTION_CACHE, TARGET_DETECTION_CACHE_LOCK
+            detection_key = req.model_id[3:]  # strip 'td-' prefix
+            with TARGET_DETECTION_CACHE_LOCK:
+                cached = TARGET_DETECTION_CACHE.get(detection_key)
+            if cached:
+                from ..utils.cache import _lat_lng_to_pixel_index
+                data = cached['detection_map']
+                transform = cached['transform']
+                src_crs = cached.get('crs')
+                height, width = data.shape
+
+                target_lng, target_lat = req.lng, req.lat
+                if src_crs and str(src_crs).upper() != 'EPSG:4326':
+                    try:
+                        from rasterio.warp import transform as rasterio_transform
+                        xs, ys = rasterio_transform('EPSG:4326', src_crs, [req.lng], [req.lat])
+                        target_lng, target_lat = xs[0], ys[0]
+                    except Exception:
+                        pass
+
+                row_idx, col_idx = _lat_lng_to_pixel_index(target_lat, target_lng, transform, height, width)
+                if row_idx is not None and col_idx is not None:
+                    value = float(data[row_idx, col_idx])
+                    if np.isfinite(value):
+                        return {"value": round(value, 4)}
+                return {"value": "Outside image bounds"}
+
         if cache_key:
             value = get_pixel_value_from_cache(cache_key, req.lat, req.lng)
             if value is not None:
@@ -365,7 +561,7 @@ def apply_threshold_range(req: ThresholdRangeRequest):
         cache_key = None
         if req.model_id in ['model2', 'model3', 'model4']:
             cache_key = find_matching_index_cache_key(req.image_id, req.model_id)
-        elif req.model_id.startswith('custom-result-'):
+        elif req.model_id.startswith('custom-result-') or req.model_id.startswith('spectral-'):
             cache_key = req.model_id
         
         cached_data = None
@@ -395,24 +591,14 @@ def apply_threshold_range(req: ThresholdRangeRequest):
             (min_lon, min_lat, max_lon, max_lat), scale_m=10
         )
         
-        timestamp = int(time.time() * 1000)
-        overlay_filename = f'threshold_range_{req.model_id}_aoi_{timestamp}.png'
-        overlay_png_path = os.path.join(OUTPUTS_DIR, overlay_filename)
-        save_rgba_overlay_png(aoi_rgb, aoi_mask, overlay_png_path)
-        
+        from ..services.gpu_compute import rgb_mask_to_base64_gpu, rgba_to_base64_gpu
+        overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
+
         preview_rgba = np.zeros((*threshold_rgb.shape[:2], 4), dtype=np.uint8)
         preview_rgba[:, :, :3] = threshold_rgb
         preview_rgba[:, :, 3] = 255
         preview_rgba[~mask, 3] = 0
-        
-        preview_img = Image.fromarray(preview_rgba, mode='RGBA')
-        preview_img.thumbnail((256, 256), Image.LANCZOS)
-        preview_filename = f'threshold_range_preview_{req.model_id}_{timestamp}.png'
-        preview_png_path = os.path.join(OUTPUTS_DIR, preview_filename)
-        preview_img.save(preview_png_path)
-        
-        preview_url = f"/api/proxy-file?path={requests.utils.quote('file://' + preview_png_path)}"
-        overlay_url = f"/api/proxy-file?path={requests.utils.quote('file://' + overlay_png_path)}"
+        preview_url = rgba_to_base64_gpu(preview_rgba, max_dim=256)
         
         return {
             'name': f'{req.colormap.get("label", "Index")} (Range: {req.min_threshold:.3f}-{req.max_threshold:.3f})',
@@ -432,5 +618,123 @@ def apply_threshold_range(req: ThresholdRangeRequest):
         print(f"Error applying threshold range: {e}")
         import traceback
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SpectralValuesRequest(BaseModel):
+    image_id: str
+    bbox: List[float]
+    lat: float
+    lng: float
+
+
+@router.post("/get-spectral-values")
+def get_spectral_values(req: SpectralValuesRequest):
+    """Get all band values at a pixel location from the cached raster."""
+    try:
+        cache_key = bbox_to_cache_key(req.image_id, req.bbox)
+        with RASTER_CACHE_LOCK:
+            cached_raster_path = RASTER_FILE_CACHE.get(cache_key)
+
+        if not cached_raster_path or not os.path.exists(cached_raster_path):
+            raise HTTPException(status_code=400, detail="No cached raster. Process the image first.")
+
+        from rasterio.transform import rowcol
+        from pyproj import Transformer
+
+        band_names = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
+
+        with rasterio.open(cached_raster_path) as src:
+            if src.crs and str(src.crs).upper() != 'EPSG:4326':
+                transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+                x, y = transformer.transform(req.lng, req.lat)
+            else:
+                x, y = req.lng, req.lat
+
+            row, col = rowcol(src.transform, x, y)
+            row, col = int(row), int(col)
+
+            if row < 0 or row >= src.height or col < 0 or col >= src.width:
+                return {"bands": [], "error": "Outside image bounds"}
+
+            bands = []
+            n_bands = min(src.count, len(band_names))
+            for i in range(n_bands):
+                val = float(src.read(i + 1, window=rasterio.windows.Window(col, row, 1, 1))[0, 0])
+                bands.append({"name": band_names[i] if i < len(band_names) else f"Band_{i+1}", "value": round(val, 2)})
+
+        return {"bands": bands, "lat": req.lat, "lng": req.lng}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AreaSpectralStatsRequest(BaseModel):
+    image_id: str
+    bbox: List[float]
+    points: List[dict]  # [{lat, lng}, ...]
+
+
+@router.post("/get-area-spectral-stats")
+def get_area_spectral_stats(req: AreaSpectralStatsRequest):
+    """Get mean and std of all band values across multiple points."""
+    try:
+        cache_key = bbox_to_cache_key(req.image_id, req.bbox)
+        with RASTER_CACHE_LOCK:
+            cached_raster_path = RASTER_FILE_CACHE.get(cache_key)
+
+        if not cached_raster_path or not os.path.exists(cached_raster_path):
+            raise HTTPException(status_code=400, detail="No cached raster. Process the image first.")
+
+        from rasterio.transform import rowcol
+        from pyproj import Transformer
+
+        band_names = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
+
+        all_values = []  # list of [band0_val, band1_val, ...] per valid point
+
+        with rasterio.open(cached_raster_path) as src:
+            transformer = None
+            if src.crs and str(src.crs).upper() != 'EPSG:4326':
+                transformer = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True)
+
+            n_bands = min(src.count, len(band_names))
+
+            for pt in req.points:
+                lat, lng = pt.get('lat', 0), pt.get('lng', 0)
+                if transformer:
+                    x, y = transformer.transform(lng, lat)
+                else:
+                    x, y = lng, lat
+
+                row, col = rowcol(src.transform, x, y)
+                row, col = int(row), int(col)
+
+                if row < 0 or row >= src.height or col < 0 or col >= src.width:
+                    continue
+
+                vals = []
+                for i in range(n_bands):
+                    v = float(src.read(i + 1, window=rasterio.windows.Window(col, row, 1, 1))[0, 0])
+                    vals.append(v)
+                all_values.append(vals)
+
+        if not all_values:
+            return {"mean_bands": [], "std_bands": [], "sample_count": 0, "error": "No valid points in bounds"}
+
+        arr = np.array(all_values)  # shape: (N, n_bands)
+        means = np.mean(arr, axis=0)
+        stds = np.std(arr, axis=0)
+
+        mean_bands = [{"name": band_names[i] if i < len(band_names) else f"Band_{i+1}", "value": round(float(means[i]), 2)} for i in range(len(means))]
+        std_bands = [{"name": band_names[i] if i < len(band_names) else f"Band_{i+1}", "value": round(float(stds[i]), 2)} for i in range(len(stds))]
+
+        return {"mean_bands": mean_bands, "std_bands": std_bands, "sample_count": len(all_values)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
