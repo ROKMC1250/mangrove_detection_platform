@@ -1,5 +1,5 @@
 """
-Mangrove Platform Backend - Main Application Entry Point
+EarthScope Backend - Main Application Entry Point
 
 This is the modular version of the backend that organizes code into:
 - core/: Configuration and progress tracking
@@ -10,11 +10,13 @@ This is the modular version of the backend that organizes code into:
 
 import os
 import mimetypes
+import time as _time
+from datetime import datetime as _dt
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 
 # Initialize core components
 from .core.config import (
@@ -29,7 +31,8 @@ from .core.progress import PROGRESS_TRACKER
 # Initialize Earth Engine
 from .services.earth_engine import init_earth_engine
 from .services.model_inference import init_model1, get_model1_status
-from .services.sam2_service import init_sam2, get_sam2_status
+from .services.sam3_service import init_sam3, get_sam3_status
+from .services.session_gate import SESSION_GATE
 
 # Import API routers
 from .api import (
@@ -40,8 +43,10 @@ from .api import (
 )
 from .api.routes_target_detection import router as target_detection_router
 from .api.routes_mangrove_segmentation import router as mangrove_segmentation_router
+from .api.routes_change_detection import router as change_detection_router
 from .api.routes_local import router as local_router
-from .api.routes_sam2 import router as sam2_router
+from .api.routes_sam3 import router as sam3_router
+from .api.routes_session import router as session_router, SESSION_COOKIE
 
 
 # Initialize Earth Engine at module load
@@ -50,8 +55,8 @@ init_earth_engine()
 
 # Create FastAPI application
 app = FastAPI(
-    title="Mangrove Platform Backend",
-    description="Backend API for satellite image processing and mangrove analysis",
+    title="EarthScope Backend",
+    description="Backend API for satellite image processing and Earth observation analysis",
     version="2.0.0"
 )
 
@@ -66,20 +71,96 @@ app.add_middleware(
 )
 
 
+# Session gate — admit only one browser session at a time.
+# Everything outside _OPEN_PATHS is blocked for callers who don't hold the
+# gate. The frontend shows a full-screen waiting overlay on 423.
+_OPEN_PATHS = (
+    "/static/", "/outputs/", "/api/session/", "/health",
+)
+
+
+@app.middleware("http")
+async def session_gate_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in ("", "/") or any(path.startswith(p) for p in _OPEN_PATHS):
+        return await call_next(request)
+
+    sid = request.cookies.get(SESSION_COOKIE)
+    if not SESSION_GATE.holds(sid):
+        return JSONResponse(
+            status_code=423,
+            content={
+                "detail": "Another user is currently using the platform. Please wait.",
+                "gate": SESSION_GATE.status(),
+            },
+        )
+    return await call_next(request)
+
+
+# In-memory set of session cookie values seen since process start. Used
+# only to flag the first request that introduces a new sid so the operator
+# can tell at a glance when a new computer/browser starts hitting the
+# server. The session gate itself only ever admits one sid at a time, so
+# this set stays tiny in practice.
+_SEEN_SIDS: set = set()
+
+# Static / output traffic fires on every page load and is rarely useful
+# for "who's using the platform" diagnostics. Skip these paths to keep
+# the access log readable.
+_LOG_SKIP_PREFIXES = ("/static/", "/outputs/")
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    """Single-line access log with timestamp, client IP, and short session
+    id. Sits outside `session_gate_middleware` on purpose so 423 (locked
+    out) responses are also recorded — those are the ones that tell you a
+    second computer is trying to connect."""
+    start = _time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (_time.perf_counter() - start) * 1000
+
+    path = request.url.path
+    if any(path.startswith(p) for p in _LOG_SKIP_PREFIXES):
+        return response
+
+    # Prefer X-Forwarded-For when a reverse proxy is in front of uvicorn,
+    # otherwise fall back to the direct peer address.
+    fwd = request.headers.get("x-forwarded-for")
+    ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "-")
+
+    sid_full = request.cookies.get(SESSION_COOKIE) or ""
+    sid_short = sid_full[:8] if sid_full else "-"
+    is_new = bool(sid_full) and sid_full not in _SEEN_SIDS
+    if is_new:
+        _SEEN_SIDS.add(sid_full)
+
+    ts = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_tag = " [NEW]" if is_new else ""
+    print(
+        f"[{ts}] {ip:<15} sid={sid_short}{new_tag} "
+        f"{request.method:<6} {path} {response.status_code} ({elapsed_ms:.0f}ms)",
+        flush=True,
+    )
+    return response
+
+
 # Mount static directories
 app.mount(STATIC_MOUNT, StaticFiles(directory=FRONTEND_DIR), name="static")
 app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 
 
 # Include API routers
+app.include_router(session_router)
 app.include_router(search_router)
 app.include_router(process_router)
 app.include_router(analysis_router)
 app.include_router(download_router)
 app.include_router(target_detection_router)
 app.include_router(mangrove_segmentation_router)
+app.include_router(change_detection_router)
 app.include_router(local_router)
-app.include_router(sam2_router)
+app.include_router(sam3_router)
 
 
 # ===== Core Endpoints =====
@@ -209,7 +290,7 @@ async def root():
 @app.on_event("startup")
 async def on_startup():
     """Initialize components on startup."""
-    print("🚀 Starting Mangrove Platform Backend...")
+    print("🚀 Starting EarthScope Backend...")
     try:
         model_loaded = init_model1()
         if model_loaded:
@@ -221,16 +302,17 @@ async def on_startup():
         print(f"⚠️  STARTUP - Model initialization error: {e}")
         print("   Continuing without segmentation model - other features are still available")
 
-    # Initialize SAM2 model
+    # Initialize SAM3 model
     try:
-        sam2_loaded = init_sam2()
-        if sam2_loaded:
-            print("✅ SAM2 model loaded successfully")
+        sam3_loaded = init_sam3()
+        if sam3_loaded:
+            print("✅ SAM3 model loaded successfully")
         else:
-            print("⚠️  SAM2 model not available - continuing without it")
+            print("⚠️  SAM3 model not available - continuing without it")
     except Exception as e:
-        print(f"⚠️  STARTUP - SAM2 initialization error: {e}")
-        print("   Continuing without SAM2 - other features are still available")
+        print(f"⚠️  STARTUP - SAM3 initialization error: {e}")
+        print("   Continuing without SAM3 - other features are still available")
+
 
 
 # ===== Health Check =====

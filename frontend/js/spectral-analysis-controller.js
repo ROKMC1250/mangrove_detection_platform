@@ -16,6 +16,10 @@ class SpectralAnalysisController {
         this.results = [];  // Array of computed index results
         this.overlayLayers = {};  // layerId → true (managed via mapManager or localImage)
 
+        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.4
+        this._slotStash = { A: null, B: null };
+        this._originSlot = null;  // stamped at computeIndex kickoff
+
         this.presetIndices = [
             { id: 'ndvi', name: 'NDVI', formula: '(NIR-RED)/(NIR+RED)' },
             { id: 'mvi',  name: 'MVI',  formula: '(NIR-GREEN)/(SWIR1-GREEN)' },
@@ -181,6 +185,10 @@ class SpectralAnalysisController {
         const ui = item.querySelector('.sa-ui');
         if (!ui) return;
 
+        // Remember which slot this compute belongs to — if the user switches
+        // slots before the response arrives we must not leak the result.
+        this._originSlot = this.platform.currentSlot;
+
         const select = ui.querySelector('.sa-index-select');
         const indexType = select.value;
         const runBtn = ui.querySelector('.sa-run-btn');
@@ -220,21 +228,31 @@ class SpectralAnalysisController {
         runBtn.disabled = true;
         runBtn.textContent = '...';
 
-        try {
+        const indexLabel = (indexType || 'index').toUpperCase();
+        const run = async () => {
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-
             if (!response.ok) {
                 const err = await response.json();
                 throw new Error(err.detail || 'Failed to compute index');
             }
-
             const result = await response.json();
             this.addResultItem(item, result);
+            // Hold the overlay until the freshly added analysis image actually paints.
+            if (result && result.model_id) {
+                await this._awaitOverlayPaint(result.model_id);
+            }
+        };
 
+        try {
+            if (this.platform && typeof this.platform.withLoading === 'function') {
+                await this.platform.withLoading(`Computing ${indexLabel}...`, run);
+            } else {
+                await run();
+            }
         } catch (err) {
             console.error('Spectral index error:', err);
             this.platform.showNotification(`Error: ${err.message}`, 'error');
@@ -244,7 +262,34 @@ class SpectralAnalysisController {
         }
     }
 
+    /** Resolve once the analysis overlay's <img> finishes decoding. 15s safety timeout. */
+    _awaitOverlayPaint(layerId) {
+        return new Promise(resolve => {
+            const layer = window.mapManager?.analysisLayers?.[layerId];
+            if (!layer || typeof layer.once !== 'function') return resolve();
+            const el = (typeof layer.getElement === 'function') ? layer.getElement() : null;
+            if (el && el.complete && el.naturalHeight > 0) return resolve();
+            let settled = false;
+            const finish = () => { if (settled) return; settled = true; resolve(); };
+            const t = setTimeout(finish, 15000);
+            layer.once('load',  () => { clearTimeout(t); finish(); });
+            layer.once('error', () => { clearTimeout(t); finish(); });
+        });
+    }
+
     addResultItem(item, result) {
+        // Drop completions belonging to a slot the user has since switched
+        // away from. Origin is set by computeIndex at kickoff.
+        const origin = this._originSlot;
+        this._originSlot = null;
+        if (origin && origin !== this.platform.currentSlot) {
+            this.platform.showNotification(
+                `Spectral index on Time ${origin} dropped — you switched slots mid-run.`,
+                'warning'
+            );
+            return;
+        }
+
         const resultsList = item.querySelector('.sa-results-list');
         if (!resultsList) return;
 
@@ -305,6 +350,10 @@ class SpectralAnalysisController {
                     <input type="number" class="colorbar-max-input" value="${maxVal}" step="0.01">
                 </div>
             </div>
+            <div class="sa-result-stats" style="display:none;">
+                <span class="sa-result-pixels"></span>
+                <span class="sa-result-pct"></span>
+            </div>
         `;
 
         resultsList.appendChild(resultItem);
@@ -331,6 +380,34 @@ class SpectralAnalysisController {
 
         // Setup colorbar threshold
         this.setupColorbarThreshold(resultItem, resultId, result);
+
+        // Rehydrate UI for results that already have a saved mask — happens
+        // when the SA panel is rebuilt after a slot switch (`handleSlotChange`
+        // → `_thawFromSlot` → loop over `this.results`). Without this the
+        // card would default back to score-thumb / hidden-stats even though
+        // the underlying mask state on `result` is still live.
+        if (result.showingMask && result.mask_result) {
+            const m = result.mask_result;
+            const thumb = resultItem.querySelector('.sa-result-thumb');
+            if (thumb && m.preview_url) thumb.src = m.preview_url;
+            const stats = resultItem.querySelector('.sa-result-stats');
+            if (stats) {
+                stats.style.display = 'flex';
+                const px = stats.querySelector('.sa-result-pixels');
+                const pct = stats.querySelector('.sa-result-pct');
+                if (px) px.textContent = `🎯 ${(m.detected_pixels ?? 0).toLocaleString()} px`;
+                if (pct) pct.textContent = `${m.detection_percentage ?? 0}%`;
+            }
+            const status = resultItem.querySelector('.sa-result-status');
+            if (status) {
+                status.textContent = `Mask (${(m.min_threshold ?? 0).toFixed(3)} – ${(m.max_threshold ?? 0).toFixed(3)})`;
+            }
+            // If the overlay layer was carried over via the slot stash,
+            // mark the card as visible so the next click toggles correctly.
+            if (this.overlayLayers && this.overlayLayers[resultId]) {
+                resultItem.dataset.visible = 'true';
+            }
+        }
     }
 
     setupColorbarThreshold(resultItem, modelId, result) {
@@ -413,6 +490,20 @@ class SpectralAnalysisController {
             minInput.value = minVal.toFixed(3);
             maxInput.value = maxVal.toFixed(3);
             updateSelection();
+
+            // Drop the mask state. After cancel the card is back to "score
+            // map" mode — thumbnail, overlay, and stats follow.
+            result.showingMask = false;
+            result.mask_result = null;
+            const card = document.querySelector(`.sa-result-item[data-result-id="${modelId}"]`);
+            if (card) {
+                const thumb = card.querySelector('.sa-result-thumb');
+                if (thumb && result.preview_url) thumb.src = result.preview_url;
+                const stats = card.querySelector('.sa-result-stats');
+                if (stats) stats.style.display = 'none';
+                const status = card.querySelector('.sa-result-status');
+                if (status) status.textContent = `${result.name} — Score map`;
+            }
             if (result.overlay_url) {
                 this.showOverlayOnMap(modelId, result.overlay_url, result.overlay_meta);
             }
@@ -463,13 +554,60 @@ class SpectralAnalysisController {
             if (!response.ok) throw new Error('Failed to apply threshold');
 
             const data = await response.json();
-            this.showOverlayOnMap(modelId, data.overlay_url, data.overlay_meta || result.overlay_meta);
 
+            // Save mask state onto the result so toggling the card off and
+            // back on (or switching tabs and returning) keeps showing the
+            // mask, not the score. Mirrors target-detection's `showingMask`
+            // contract. The original score `preview_url`/`overlay_url` on
+            // `result` are preserved so Cancel can restore them.
+            result.mask_result = {
+                preview_url: data.preview_url,
+                overlay_url: data.overlay_url,
+                overlay_meta: data.overlay_meta || result.overlay_meta,
+                detected_pixels: data.detected_pixels,
+                detection_percentage: data.detection_percentage,
+                min_threshold: data.min_threshold,
+                max_threshold: data.max_threshold,
+                analysis_id: data.analysis_id,
+            };
+            result.showingMask = true;
+
+            // Render the binary mask overlay on the map. Reuses `modelId`
+            // as the layer id, so the mask cleanly replaces the score
+            // overlay and gets exactly one entry in the layer panel.
+            this.showOverlayOnMap(modelId, data.overlay_url, data.overlay_meta || result.overlay_meta, true);
+
+            // Register the binary mask in the slot registry so change
+            // detection can pick it up. Backend returns analysis_id (the
+            // cache key under which the mask is stored).
+            if (data.analysis_id && typeof this.platform.registerSlotAnalysis === 'function') {
+                const label = colormap?.label || result?.name || modelId;
+                this.platform.registerSlotAnalysis({
+                    id: data.analysis_id,
+                    type: 'spectral',
+                    name: `${label} (${min.toFixed(3)}–${max.toFixed(3)})`,
+                    hasMask: true,
+                });
+            }
+
+            // Update the result card UI: thumbnail flips to the mask preview,
+            // stats panel shows pixel count + percentage, status text reflects
+            // the active threshold.
             const resultItem = document.querySelector(`.sa-result-item[data-result-id="${modelId}"]`);
             if (resultItem) {
                 resultItem.dataset.visible = 'true';
+                const thumb = resultItem.querySelector('.sa-result-thumb');
+                if (thumb && data.preview_url) thumb.src = data.preview_url;
                 const status = resultItem.querySelector('.sa-result-status');
-                if (status) status.textContent = `Threshold applied (${min.toFixed(3)} - ${max.toFixed(3)})`;
+                if (status) status.textContent = `Mask (${min.toFixed(3)} – ${max.toFixed(3)})`;
+                const stats = resultItem.querySelector('.sa-result-stats');
+                if (stats) {
+                    stats.style.display = 'flex';
+                    const pxEl = stats.querySelector('.sa-result-pixels');
+                    const pctEl = stats.querySelector('.sa-result-pct');
+                    if (pxEl) pxEl.textContent = `🎯 ${(data.detected_pixels ?? 0).toLocaleString()} px`;
+                    if (pctEl) pctEl.textContent = `${data.detection_percentage ?? 0}%`;
+                }
             }
         } catch (err) {
             console.error('Threshold error:', err);
@@ -489,28 +627,44 @@ class SpectralAnalysisController {
                 if (status) status.textContent = 'Click to toggle overlay';
             }
         } else {
-            if (result.overlay_url) {
-                this.showOverlayOnMap(resultId, result.overlay_url, result.overlay_meta);
+            // Once the user has applied a threshold, the card represents a
+            // saved mask — bring back the mask overlay (not the score) on
+            // toggle. Cancel is the only path that drops back to the score
+            // overlay. This is what makes the mask "stick" across visibility
+            // toggles and image switches.
+            const useMask = result?.showingMask && result?.mask_result?.overlay_url;
+            const url = useMask ? result.mask_result.overlay_url : result.overlay_url;
+            const meta = useMask ? (result.mask_result.overlay_meta || result.overlay_meta) : result.overlay_meta;
+            if (url) {
+                this.showOverlayOnMap(resultId, url, meta, !!useMask);
             }
             if (resultItem) {
                 resultItem.dataset.visible = 'true';
                 const status = resultItem.querySelector('.sa-result-status');
-                if (status) status.textContent = `${result.name} — Click to hide`;
+                if (status) {
+                    if (useMask) {
+                        const lo = result.mask_result.min_threshold;
+                        const hi = result.mask_result.max_threshold;
+                        status.textContent = `Mask (${(lo ?? 0).toFixed(3)} – ${(hi ?? 0).toFixed(3)})`;
+                    } else {
+                        status.textContent = `${result.name} — Click to hide`;
+                    }
+                }
             }
         }
     }
 
-    showOverlayOnMap(layerId, overlayUrl, meta) {
+    showOverlayOnMap(layerId, overlayUrl, meta, isBinary = false) {
         this.removeOverlayFromMap(layerId);
 
         if (this.isLocalMode()) {
             const li = this.platform.localImage;
             if (li) {
-                li.showLocalAnalysisLayer(layerId, overlayUrl, li.preloadedSize?.width, li.preloadedSize?.height);
+                li.showLocalAnalysisLayer(layerId, overlayUrl, li.preloadedSize?.width, li.preloadedSize?.height, undefined, isBinary);
                 this.overlayLayers[layerId] = true;
             }
         } else if (window.mapManager) {
-            window.mapManager.showAnalysisLayer(layerId, overlayUrl, layerId);
+            window.mapManager.showAnalysisLayer(layerId, overlayUrl, layerId, null, isBinary);
             this.overlayLayers[layerId] = true;
         }
     }
@@ -537,4 +691,39 @@ class SpectralAnalysisController {
         Object.keys(this.overlayLayers).forEach(id => this.removeOverlayFromMap(id));
         this.results = [];
     }
+
+    // ========== Per-slot stash (Time A / Time B) ==========
+
+    _freezeToSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        this._slotStash[slotId] = {
+            results: this.results.slice(),
+            overlayLayers: { ...this.overlayLayers },
+        };
+    }
+
+    _thawFromSlot(slotId) {
+        const stash = (slotId === 'A' || slotId === 'B') ? this._slotStash[slotId] : null;
+        if (stash) {
+            this.results = Array.isArray(stash.results) ? stash.results.slice() : [];
+            this.overlayLayers = { ...(stash.overlayLayers || {}) };
+            this._slotStash[slotId] = null;
+        } else {
+            this.results = [];
+            this.overlayLayers = {};
+        }
+    }
+
+    handleSlotChange(oldSlot, newSlot) {
+        if (oldSlot === newSlot) return;
+        this._freezeToSlot(oldSlot);
+        this._thawFromSlot(newSlot);
+        const item = document.querySelector('.analysis-item.spectral-analysis-option');
+        const list = item?.querySelector('.sa-results-list');
+        if (list) {
+            list.innerHTML = '';
+            this.results.forEach(r => this._buildResultItemDOM(list, r));
+        }
+    }
+
 }

@@ -21,62 +21,155 @@ from .schemas import (
     S1TileRequest,
     S2TileRequest,
     DownloadImageRequest,
-    EmitTileRequest,
+    StretchStatsRequest,
+    StretchStatsResponse,
 )
 from ..core.config import GEE_DL_MAX_BYTES, GEE_DL_SAFETY
 from ..services.earth_engine import (
     bbox_to_geometry,
     resolve_item_to_image,
     get_visualization_params,
+    get_s1_visualization_params,
+    compute_band_stretch_stats,
 )
 from ..services.downloader import (
     download_tile_get_url,
     mosaic_tiles_to_file,
     estimate_pixels_from_bounds,
 )
+from ..utils.cache import cache_key_for_images
+from ..utils.cache_service import TTLCache
 
 
 router = APIRouter(prefix="/api", tags=["download"])
 
 
-# Cache for map IDs (to avoid repeated getMapId calls)
-_MAP_ID_CACHE = {}
-_MAP_ID_CACHE_TTL = 3600  # 1 hour TTL
+# Cache for map IDs (to avoid repeated getMapId calls).
+# Bounded LRU + 1h TTL; evicting stale entries happens on access.
+_MAP_ID_CACHE = TTLCache(maxsize=256, ttl=3600, name="map_id")
+
+# Cache for AOI-band stretch statistics. Keyed by (item_id, bbox, bands, pct_low, pct_high).
+_STRETCH_STATS_CACHE = TTLCache(maxsize=256, ttl=3600, name="stretch_stats")
+
+
+def _coerce_to_list(val, n: int) -> Optional[list]:
+    """Normalize a min/max payload into an n-element list (or None)."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        out = [float(v) for v in val]
+        if len(out) == 1:
+            return out * n
+        if len(out) == n:
+            return out
+        # Otherwise pad/truncate gracefully by repeating the first element.
+        return [out[0]] * n
+    return [float(val)] * n
+
+
+def _resolve_stretch_min_max(
+    base_img: ee.Image,
+    aoi: ee.Geometry,
+    bands: list,
+    stretch_mode: Optional[str],
+    explicit_min,
+    explicit_max,
+    pct_low: Optional[float],
+    pct_high: Optional[float],
+    default_min: float,
+    default_max: float,
+):
+    """Decide (min, max) for `ee.Image.visualize()`. Both can be returned as scalars
+    (uniform) or per-band lists (one entry per band, in the request order).
+
+    - 'percentile': reduceRegion percentile per band → per-band lists.
+    - 'minmax' or unset: honor caller's payload (scalar or list); fall back to defaults.
+    """
+    nb = len(bands) if bands else 3
+
+    if stretch_mode == "percentile" and bands:
+        lo = 2.0 if pct_low is None else float(pct_low)
+        hi = 98.0 if pct_high is None else float(pct_high)
+        if hi <= lo:
+            hi = min(100.0, lo + 1.0)
+        stats = compute_band_stretch_stats(base_img, aoi, list(bands), lo, hi)
+        mins, maxs = [], []
+        for b in bands:
+            row = stats.get(b) or {}
+            p_low = row.get("p_low")
+            p_high = row.get("p_high")
+            if p_low is None or p_high is None or p_high <= p_low:
+                # Fall back to default for that band only.
+                mins.append(float(default_min))
+                maxs.append(float(default_max))
+            else:
+                mins.append(float(p_low))
+                maxs.append(float(p_high))
+        return mins, maxs
+
+    use_min = _coerce_to_list(explicit_min, nb) or [float(default_min)] * nb
+    use_max = _coerce_to_list(explicit_max, nb) or [float(default_max)] * nb
+    # Guard against degenerate ranges per band.
+    use_max = [
+        (mx if mx > mn else mn + 1.0)
+        for mn, mx in zip(use_min, use_max)
+    ]
+    return use_min, use_max
+
+
+def _gee_tile_cache_key(req: GetTileUrlRequest) -> str:
+    """Cache key includes symbology overrides so different settings get distinct entries."""
+    base = cache_key_for_images([req.item_id], req.bbox)
+    parts = [
+        base,
+        ",".join(req.bands) if req.bands else "",
+        f"{req.min}" if req.min is not None else "",
+        f"{req.max}" if req.max is not None else "",
+        req.stretch_mode or "",
+        f"{req.pct_low}" if req.pct_low is not None else "",
+        f"{req.pct_high}" if req.pct_high is not None else "",
+    ]
+    return "|".join(parts)
 
 
 @router.post("/get-gee-tile")
-async def get_gee_tile(req: GetTileUrlRequest):
-    """Get tile URL for a Sentinel-2 image with caching."""
+def get_gee_tile(req: GetTileUrlRequest):
+    """Get tile URL for a Sentinel-2 image with optional symbology overrides + caching."""
     import time
     try:
         t0 = time.time()
-        cache_key = f"{req.item_id}_{hash(str(req.bbox))}"
-        
+        cache_key = _gee_tile_cache_key(req)
+
         # Check cache first
-        if cache_key in _MAP_ID_CACHE:
-            cached = _MAP_ID_CACHE[cache_key]
-            if time.time() - cached['timestamp'] < _MAP_ID_CACHE_TTL:
-                print(f"TILE - Using cached mapId for {req.item_id}")
-                return {"tile_template": cached['tile_template'], "bounds": cached['bounds']}
-        
+        cached = _MAP_ID_CACHE.get(cache_key)
+        if cached is not None:
+            print(f"TILE - Using cached mapId for {req.item_id}")
+            return {"tile_template": cached['tile_template'], "bounds": cached['bounds']}
+
         aoi = bbox_to_geometry(req.bbox, req.geometry)
-        base_img = resolve_item_to_image(req.item_id).clip(aoi)
-        vis_params = get_visualization_params()
-        vis_img = base_img.unmask(0).visualize(**vis_params)
-        
+        base_img = resolve_item_to_image(req.item_id).clip(aoi).unmask(0)
+
+        bands = list(req.bands) if req.bands else ["B4", "B3", "B2"]
+        vis_min, vis_max = _resolve_stretch_min_max(
+            base_img, aoi, bands, req.stretch_mode,
+            req.min, req.max, req.pct_low, req.pct_high,
+            default_min=0.0, default_max=3000.0,
+        )
+        vis_params = get_visualization_params(bands=bands, min_val=vis_min, max_val=vis_max)
+        vis_img = base_img.visualize(**vis_params)
+
         t1 = time.time()
         m = vis_img.getMapId()
         t2 = time.time()
-        
+
         tile_template = m["tile_fetcher"].url_format
         min_lon, min_lat, max_lon, max_lat = req.bbox
         bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-        
-        # Cache the result
+
+        # Cache the result (TTL handled by TTLCache)
         _MAP_ID_CACHE[cache_key] = {
             'tile_template': tile_template,
             'bounds': bounds,
-            'timestamp': time.time()
         }
 
         print(f"TILE - getMapId took {t2-t1:.2f}s, total {t2-t0:.2f}s for {req.item_id}")
@@ -86,7 +179,7 @@ async def get_gee_tile(req: GetTileUrlRequest):
 
 
 @router.get("/tile-proxy/{z}/{x}/{y}")
-async def proxy_tile(z: int, x: int, y: int, url: str):
+def proxy_tile(z: int, x: int, y: int, url: str):
     """Proxy tiles from GEE to handle rate limiting and network issues."""
     from fastapi.responses import Response
     import time
@@ -136,34 +229,41 @@ async def proxy_tile(z: int, x: int, y: int, url: str):
 
 
 @router.post("/get-titiler-url")
-async def get_titiler_url(req: GetTileUrlRequest):
+def get_titiler_url(req: GetTileUrlRequest):
     """Alias for get-gee-tile for backward compatibility."""
-    return await get_gee_tile(req)
+    return get_gee_tile(req)
+
+
+def _resolve_s1_image(item_id: str) -> ee.Image:
+    if item_id.startswith("COPERNICUS/S1_GRD/"):
+        return ee.Image(item_id)
+    return ee.Image(f"COPERNICUS/S1_GRD/{item_id}")
+
+
+def _resolve_s2_image(item_id: str) -> ee.Image:
+    if item_id.startswith("COPERNICUS/S2"):
+        if "COPERNICUS/S2_SR/" in item_id and "HARMONIZED" not in item_id:
+            item_id = item_id.replace("COPERNICUS/S2_SR/", "COPERNICUS/S2_SR_HARMONIZED/")
+        return ee.Image(item_id)
+    return ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{item_id}")
 
 
 @router.post("/get-s1-tile")
-async def get_s1_tile(req: S1TileRequest):
+def get_s1_tile(req: S1TileRequest):
     """Get tile URL for Sentinel-1 GRD image with custom visualization."""
     try:
         aoi = bbox_to_geometry(req.bbox, req.geometry)
-        
-        item_id = req.item_id
-        if item_id.startswith("COPERNICUS/S1_GRD/"):
-            base_img = ee.Image(item_id)
-        else:
-            base_img = ee.Image(f"COPERNICUS/S1_GRD/{item_id}")
-        
-        base_img = base_img.clip(aoi)
-        
-        bands = req.bands if req.bands else ['VV', 'VH', 'VV']
-        vis_params = {
-            'bands': bands,
-            'min': req.min if req.min is not None else -25,
-            'max': req.max if req.max is not None else 0,
-        }
-        
+        base_img = _resolve_s1_image(req.item_id).clip(aoi)
+
+        bands = list(req.bands) if req.bands else ['VV', 'VH', 'VV']
+        vis_min, vis_max = _resolve_stretch_min_max(
+            base_img, aoi, bands, req.stretch_mode,
+            req.min, req.max, req.pct_low, req.pct_high,
+            default_min=-25.0, default_max=0.0,
+        )
+        vis_params = get_s1_visualization_params(bands=bands, min_val=vis_min, max_val=vis_max)
         vis_img = base_img.visualize(**vis_params)
-        
+
         m = vis_img.getMapId()
         tile_template = m["tile_fetcher"].url_format
         min_lon, min_lat, max_lon, max_lat = req.bbox
@@ -175,31 +275,21 @@ async def get_s1_tile(req: S1TileRequest):
 
 
 @router.post("/get-s2-tile-custom")
-async def get_s2_tile_custom(req: S2TileRequest):
+def get_s2_tile_custom(req: S2TileRequest):
     """Get tile URL for Sentinel-2 image with custom visualization bands."""
     try:
         aoi = bbox_to_geometry(req.bbox, req.geometry)
-        
-        item_id = req.item_id
-        if item_id.startswith("COPERNICUS/S2"):
-            # Convert old S2_SR paths to S2_SR_HARMONIZED
-            if "COPERNICUS/S2_SR/" in item_id and "HARMONIZED" not in item_id:
-                item_id = item_id.replace("COPERNICUS/S2_SR/", "COPERNICUS/S2_SR_HARMONIZED/")
-            base_img = ee.Image(item_id)
-        else:
-            base_img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{item_id}")
-        
-        base_img = base_img.clip(aoi)
-        
-        bands = req.bands if req.bands else ['B4', 'B3', 'B2']
-        vis_params = {
-            'bands': bands,
-            'min': req.min if req.min is not None else 0,
-            'max': req.max if req.max is not None else 3000,
-        }
-        
+        base_img = _resolve_s2_image(req.item_id).clip(aoi).unmask(0)
+
+        bands = list(req.bands) if req.bands else ['B4', 'B3', 'B2']
+        vis_min, vis_max = _resolve_stretch_min_max(
+            base_img, aoi, bands, req.stretch_mode,
+            req.min, req.max, req.pct_low, req.pct_high,
+            default_min=0.0, default_max=3000.0,
+        )
+        vis_params = get_visualization_params(bands=bands, min_val=vis_min, max_val=vis_max)
         vis_img = base_img.visualize(**vis_params)
-        
+
         m = vis_img.getMapId()
         tile_template = m["tile_fetcher"].url_format
         min_lon, min_lat, max_lon, max_lat = req.bbox
@@ -210,136 +300,54 @@ async def get_s2_tile_custom(req: S2TileRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/get-emit-tile")
-async def get_emit_tile(req: GetTileUrlRequest):
-    """Get tile URL for EMIT hyperspectral image with default RGB visualization."""
-    try:
-        from ..services.earth_engine import bbox_to_geometry, resolve_emit_image
-        
-        aoi = bbox_to_geometry(req.bbox, req.geometry)
-        
-        base_img = resolve_emit_image(req.item_id).clip(aoi)
-        
-        # Get band names
-        band_names = base_img.bandNames().getInfo()
-        
-        # Default RGB: try to find bands around 650nm (red), 550nm (green), 450nm (blue)
-        # EMIT bands are typically named with wavelength
-        r_band = None
-        g_band = None
-        b_band = None
-        
-        # Try to find closest bands to target wavelengths
-        target_r = 650  # Red
-        target_g = 550  # Green
-        target_b = 450  # Blue
-        
-        def find_closest_band(target_wl):
-            closest = None
-            min_diff = float('inf')
-            for band_name in band_names:
-                try:
-                    # Try to extract wavelength from band name
-                    if '_' in band_name:
-                        wl_str = band_name.split('_')[-1]
-                        wl = float(wl_str)
-                    elif band_name.replace('.', '').isdigit():
-                        wl = float(band_name)
-                    else:
-                        continue
-                    
-                    diff = abs(wl - target_wl)
-                    if diff < min_diff:
-                        min_diff = diff
-                        closest = band_name
-                except (ValueError, AttributeError):
-                    continue
-            return closest
-        
-        r_band = find_closest_band(target_r) or (band_names[len(band_names) // 2] if band_names else None)
-        g_band = find_closest_band(target_g) or (band_names[len(band_names) // 3] if band_names else None)
-        b_band = find_closest_band(target_b) or (band_names[0] if band_names else None)
-        
-        # Fallback: use first 3 bands if wavelength extraction fails
-        if not r_band or not g_band or not b_band:
-            if len(band_names) >= 3:
-                r_band = band_names[len(band_names) // 2]
-                g_band = band_names[len(band_names) // 3]
-                b_band = band_names[0]
-            else:
-                # Use same band for all if not enough bands
-                r_band = g_band = b_band = band_names[0] if band_names else None
-        
-        if not r_band or not g_band or not b_band:
-            raise HTTPException(status_code=400, detail="Could not determine RGB bands for EMIT image")
-        
-        # Select RGB bands
-        vis_img = base_img.select([r_band, g_band, b_band])
-        
-        # Visualize with appropriate scaling (EMIT reflectance is typically 0-1 or 0-10000)
-        vis_params = {
-            'bands': [r_band, g_band, b_band],
-            'min': 0,
-            'max': 10000,
-        }
-        
-        vis_img = vis_img.visualize(**vis_params)
-        
-        m = vis_img.getMapId()
-        tile_template = m["tile_fetcher"].url_format
-        min_lon, min_lat, max_lon, max_lat = req.bbox
-        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-        
-        return {"tile_template": tile_template, "bounds": bounds}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/compute-stretch-stats", response_model=StretchStatsResponse)
+def compute_stretch_stats(req: StretchStatsRequest):
+    """Compute per-band min/max/percentile statistics for the requested image+AOI.
 
-
-@router.post("/get-emit-tile-custom")
-async def get_emit_tile_custom(req: EmitTileRequest):
-    """Get tile URL for EMIT hyperspectral image with custom RGB bands and visualization parameters."""
+    Used by the symbology UI to populate slider initial values and the "Auto" button.
+    """
     try:
-        from ..services.earth_engine import bbox_to_geometry, resolve_emit_image
-        
+        if not req.bands:
+            raise HTTPException(status_code=400, detail="bands must not be empty")
+
+        pct_low = 2.0 if req.pct_low is None else float(req.pct_low)
+        pct_high = 98.0 if req.pct_high is None else float(req.pct_high)
+
+        cache_key = "|".join([
+            req.sensor,
+            req.item_id,
+            ",".join(f"{v:.6f}" for v in req.bbox),
+            ",".join(req.bands),
+            f"{pct_low}",
+            f"{pct_high}",
+        ])
+        cached = _STRETCH_STATS_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
         aoi = bbox_to_geometry(req.bbox, req.geometry)
-        base_img = resolve_emit_image(req.item_id).clip(aoi)
-        
-        # Use provided bands or default
-        if not req.bands or len(req.bands) != 3:
-            raise HTTPException(status_code=400, detail="Exactly 3 bands required for RGB visualization")
-        
-        r_band, g_band, b_band = req.bands
-        
-        # Select RGB bands
-        vis_img = base_img.select([r_band, g_band, b_band])
-        
-        # Visualize with custom parameters
-        vis_params = {
-            'bands': [r_band, g_band, b_band],
-            'min': req.min or 0,
-            'max': req.max or 10000,
-        }
-        
-        vis_img = vis_img.visualize(**vis_params)
-        
-        m = vis_img.getMapId()
-        tile_template = m["tile_fetcher"].url_format
-        min_lon, min_lat, max_lon, max_lat = req.bbox
-        bounds = [[min_lat, min_lon], [max_lat, max_lon]]
-        
-        return {"tile_template": tile_template, "bounds": bounds}
+        if req.sensor == "s1":
+            base_img = _resolve_s1_image(req.item_id).clip(aoi)
+            scale = 10
+        else:
+            base_img = _resolve_s2_image(req.item_id).clip(aoi).unmask(0)
+            scale = 10
+
+        stats = compute_band_stretch_stats(base_img, aoi, list(req.bands), pct_low, pct_high, scale=scale)
+        result = {"bands": stats, "pct_low": pct_low, "pct_high": pct_high}
+        _STRETCH_STATS_CACHE[cache_key] = result
+        return result
     except HTTPException:
         raise
     except Exception as e:
+        print(f"STRETCH STATS ERROR: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/download-s1-image")
-async def download_s1_image(req: DownloadImageRequest):
+def download_s1_image(req: DownloadImageRequest):
     """Download Sentinel-1 GRD image as GeoTIFF or visualization PNG."""
     try:
         aoi = bbox_to_geometry(req.bbox, req.geometry)
@@ -415,7 +423,7 @@ async def download_s1_image(req: DownloadImageRequest):
 
 
 @router.post("/download-s2-image")
-async def download_s2_image(req: DownloadImageRequest):
+def download_s2_image(req: DownloadImageRequest):
     """Download Sentinel-2 image as GeoTIFF or visualization PNG."""
     try:
         aoi = bbox_to_geometry(req.bbox, req.geometry)

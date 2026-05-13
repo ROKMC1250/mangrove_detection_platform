@@ -3,9 +3,21 @@ GPU-accelerated computation module using PyTorch CUDA.
 
 Provides drop-in replacements for CPU-heavy numpy operations.
 All functions automatically fall back to CPU if CUDA fails (OOM, etc.).
+
+Concurrency model
+-----------------
+A single low-spec GPU cannot safely run kernels from multiple threads at once:
+VRAM spikes and OOMs. To serialise access, every public function in this
+module is wrapped with `@_gpu_serialized`, which acquires a module-level
+`RLock`. The lock is re-entrant so a GPU function that delegates to another
+GPU function in this module doesn't deadlock. The segmentation model's
+forward pass in `model_inference.py` also acquires `_GPU_LOCK`, so all GPU
+work in the backend shares one FIFO-ish ordering point.
 """
 
+import functools
 import io
+import threading
 import base64
 import numpy as np
 from typing import Tuple, Optional
@@ -26,6 +38,23 @@ except ImportError:
 print(f"GPU Compute: CUDA={'available' if HAS_CUDA else 'not available'}")
 
 
+# Serialises every GPU kernel / upload in the backend. Re-entrant so a
+# GPU function calling another GPU function (e.g. rgb_mask_to_base64_gpu
+# -> rgba_to_base64_gpu) doesn't deadlock.
+_GPU_LOCK = threading.RLock()
+
+
+def _gpu_serialized(fn):
+    """Acquire _GPU_LOCK for the whole call. CPU fallbacks take the lock
+    too — that's a few microseconds of overhead and keeps the contract
+    simple (one concurrent call to this module, period)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _GPU_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 def _gpu_cleanup():
     """Free GPU memory after computation."""
     if HAS_CUDA:
@@ -33,16 +62,51 @@ def _gpu_cleanup():
 
 
 # =============================================================================
-# GPU Resident Image Cache
+# GPU Resident Image Cache (bounded; evicted tensors release CUDA memory)
 # =============================================================================
 
-_GPU_IMAGE_CACHE = {}  # cache_key -> torch.Tensor (H, W, Bands) on CUDA
+try:
+    from backend.utils.cache_service import TTLCache
+except ImportError:  # allow running from within backend/
+    from utils.cache_service import TTLCache
 
 
+def _release_tensor(tensor) -> None:
+    """on_evict hook — free GPU memory when a tensor is pushed out."""
+    try:
+        del tensor
+    finally:
+        if HAS_CUDA:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+
+# Bounded cache: keep a small number of recent images resident on the GPU.
+# Exceeding capacity evicts the LRU tensor and frees its VRAM.
+_GPU_IMAGE_CACHE = TTLCache(
+    maxsize=4, ttl=30 * 60, on_evict=_release_tensor, name="gpu_image"
+)
+
+
+@_gpu_serialized
 def load_image_to_gpu(cache_key: str, band_arrays: list) -> 'torch.Tensor':
-    """Stack band arrays and load to GPU once. Returns GPU tensor (H, W, Bands)."""
-    if cache_key in _GPU_IMAGE_CACHE:
-        return _GPU_IMAGE_CACHE[cache_key]
+    """Stack band arrays and load to GPU once. Returns GPU tensor (H, W, Bands).
+
+    Thread-safe: concurrent callers with the same cache_key wait on the GPU
+    lock; the loser re-checks the cache and reuses the winner's upload
+    instead of allocating a duplicate tensor (double-checked locking).
+    """
+    cached = _GPU_IMAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Re-check under the lock to avoid redundant uploads under contention.
+    # (The decorator already holds _GPU_LOCK at this point.)
+    cached = _GPU_IMAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
 
     stacked = np.stack(band_arrays, axis=-1)
     if HAS_CUDA:
@@ -64,12 +128,13 @@ def clear_gpu_image(cache_key: str = None):
     if cache_key:
         t = _GPU_IMAGE_CACHE.pop(cache_key, None)
         if t is not None:
-            del t
+            _release_tensor(t)
     else:
         _GPU_IMAGE_CACHE.clear()
     _gpu_cleanup()
 
 
+@_gpu_serialized
 def compute_percentiles_gpu(gpu_image: 'torch.Tensor', percentile_list: list = None,
                             max_samples: int = 2_000_000) -> dict:
     """Compute percentiles on GPU using stride-based sampling.
@@ -114,6 +179,7 @@ def compute_percentiles_gpu(gpu_image: 'torch.Tensor', percentile_list: list = N
     return result
 
 
+@_gpu_serialized
 def stretch_bands_gpu(gpu_image: 'torch.Tensor', min_val: float, max_val: float) -> dict:
     """Stretch each band to uint8 on GPU and return as base64 JPEG data URLs.
 
@@ -149,6 +215,50 @@ def stretch_bands_gpu(gpu_image: 'torch.Tensor', min_val: float, max_val: float)
     return result, w, h
 
 
+@_gpu_serialized
+def stretch_bands_gpu_multi(gpu_image: 'torch.Tensor', specs: list) -> tuple:
+    """Stretch each spec independently with its own min/max on GPU.
+
+    Each spec produces one base64 grayscale JPEG data URL. Useful for per-band
+    visualization where R/G/B channels need different display ranges. Same band
+    appearing twice with different ranges is supported (stretched twice).
+
+    Args:
+        gpu_image: (H, W, Bands) float32 tensor on CUDA
+        specs: list of dicts with keys 'key' (caller-defined identifier),
+               'band_idx' (int, 0-based), 'min_val' (float), 'max_val' (float).
+    Returns:
+        ({key: data_url, ...}, width, height)
+    """
+    from PIL import Image as PILImage
+
+    h, w, nb = gpu_image.shape
+    result = {}
+    for spec in specs:
+        key = spec.get("key")
+        b = int(spec.get("band_idx", 0))
+        if b < 0 or b >= nb:
+            raise ValueError(f"band_idx {b} out of range [0, {nb})")
+        min_val = float(spec.get("min_val", 0.0))
+        max_val = float(spec.get("max_val", 1.0))
+        denom = max(max_val - min_val, 1e-10)
+
+        band = gpu_image[:, :, b]
+        stretched = torch.clamp((band - min_val) / denom, 0.0, 1.0)
+        gray = (stretched * 255).to(torch.uint8).cpu().numpy()
+        del stretched
+
+        rgb = np.stack([gray, gray, gray], axis=-1)
+        buf = io.BytesIO()
+        PILImage.fromarray(rgb).save(buf, format='JPEG', quality=85)
+        result[key] = f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+        del gray, rgb
+
+    _gpu_cleanup()
+    return result, w, h
+
+
+@_gpu_serialized
 def detect_from_gpu_tensor(
     gpu_image: 'torch.Tensor',
     target_points: list,
@@ -268,6 +378,7 @@ def detect_from_gpu_tensor(
     }
 
 
+@_gpu_serialized
 def rgba_to_base64_gpu(rgba: np.ndarray, max_dim: int = 2048) -> str:
     """Convert RGBA numpy array to base64 data URL. No file I/O.
 
@@ -302,6 +413,7 @@ def rgba_to_base64_gpu(rgba: np.ndarray, max_dim: int = 2048) -> str:
     return f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
 
 
+@_gpu_serialized
 def rgb_mask_to_base64_gpu(rgb: np.ndarray, mask: np.ndarray, max_dim: int = 2048) -> str:
     """Convert RGB + valid mask to RGBA base64 data URL. No file I/O.
 
@@ -323,6 +435,7 @@ def rgb_mask_to_base64_gpu(rgb: np.ndarray, mask: np.ndarray, max_dim: int = 204
 # GPU-accelerated RGBA overlay + downscaled preview generation
 # =============================================================================
 
+@_gpu_serialized
 def build_rgba_and_preview_gpu(
     rgb: np.ndarray, mask: np.ndarray,
     color_override: tuple = None,
@@ -470,6 +583,7 @@ def _get_cmap_lut(cmap_name, n=256):
 # Public API - all with automatic GPU->CPU fallback
 # =============================================================================
 
+@_gpu_serialized
 def compute_normalized_index_gpu(a: np.ndarray, b: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     if not HAS_CUDA:
         return _cpu_normalized_index(a, b, eps)
@@ -490,6 +604,7 @@ def compute_normalized_index_gpu(a: np.ndarray, b: np.ndarray, eps: float = 1e-6
         return _cpu_normalized_index(a, b, eps)
 
 
+@_gpu_serialized
 def compute_savi_gpu(nir: np.ndarray, red: np.ndarray, L: float = 0.5) -> np.ndarray:
     if not HAS_CUDA:
         return _cpu_savi(nir, red, L)
@@ -510,6 +625,7 @@ def compute_savi_gpu(nir: np.ndarray, red: np.ndarray, L: float = 0.5) -> np.nda
         return _cpu_savi(nir, red, L)
 
 
+@_gpu_serialized
 def create_index_visualization_gpu(
     index_data: np.ndarray, cmap: str = 'viridis',
     vmin: Optional[float] = None, vmax: Optional[float] = None
@@ -543,6 +659,7 @@ def create_index_visualization_gpu(
         return _cpu_colormap(index_data, cmap, min_val, max_val)
 
 
+@_gpu_serialized
 def detect_sam_gpu(image_data: np.ndarray, target_spectrum: np.ndarray) -> np.ndarray:
     h, w, nb = image_data.shape
 
@@ -574,6 +691,7 @@ def detect_sam_gpu(image_data: np.ndarray, target_spectrum: np.ndarray) -> np.nd
         return _cpu()
 
 
+@_gpu_serialized
 def detect_ace_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
                    bg_mean: np.ndarray, cov_inv: np.ndarray) -> np.ndarray:
     h, w, nb = image_data.shape
@@ -614,6 +732,7 @@ def detect_ace_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
         return _cpu()
 
 
+@_gpu_serialized
 def detect_cem_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
                    cov_inv: np.ndarray) -> np.ndarray:
     h, w, nb = image_data.shape
@@ -645,6 +764,7 @@ def detect_cem_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
         return _cpu()
 
 
+@_gpu_serialized
 def detect_mf_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
                   bg_mean: np.ndarray, cov_inv: np.ndarray) -> np.ndarray:
     h, w, nb = image_data.shape
@@ -681,6 +801,7 @@ def detect_mf_gpu(image_data: np.ndarray, target_spectrum: np.ndarray,
         return _cpu()
 
 
+@_gpu_serialized
 def fit_background_gpu(bg_spectra: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     def _cpu():
         mean = np.mean(bg_spectra, axis=0)

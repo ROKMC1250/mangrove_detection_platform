@@ -1,9 +1,9 @@
-# Mangrove Detection Platform - 기능명세서
+# EarthScope - 기능명세서
 
 ## 문서 정보
 | 항목 | 내용 |
 |------|------|
-| **문서명** | Mangrove Detection Platform 기능명세서 |
+| **문서명** | EarthScope 기능명세서 |
 | **버전** | 2.0 |
 | **작성일** | 2026-01-21 |
 | **플랫폼 목적** | 위성 영상 기반 맹그로브 및 식생 분석 플랫폼 |
@@ -12,7 +12,7 @@
 
 ## 플랫폼 개요
 
-Mangrove Detection Platform은 Google Earth Engine과 연동하여 Sentinel-2 (광학), Sentinel-1 (SAR) 위성 영상을 검색, 시각화, 분석할 수 있는 웹 기반 플랫폼입니다. 딥러닝 기반 맹그로브 분류, 분광지수 분석, 타겟 탐지, 시계열 변화 모니터링 기능을 제공합니다.
+EarthScope는 Google Earth Engine과 연동하여 Sentinel-2 (광학), Sentinel-1 (SAR) 위성 영상을 검색, 시각화, 분석할 수 있는 웹 기반 플랫폼입니다. 딥러닝 기반 맹그로브 분류, 분광지수 분석, 타겟 탐지, 시계열 변화 모니터링 기능을 제공합니다.
 
 ---
 

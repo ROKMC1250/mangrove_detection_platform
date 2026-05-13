@@ -13,6 +13,22 @@ import rasterio
 
 
 # =============================================================================
+# Sentinel-2 band policy for target detection
+# =============================================================================
+# Hardcoded: B1 (60m Coastal aerosol) and B9 (60m Water vapor) are always excluded
+# from target detection — they are atmospheric-correction bands, low resolution,
+# and hurt detector performance on surface targets.
+# Raster band order from process-image (12 bands): B1,B2,B3,B4,B5,B6,B7,B8,B8A,B9,B11,B12
+S2_TD_KEEP_INDICES = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11]  # B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12
+S2_TD_BAND_NAMES = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
+
+
+def drop_s2_60m_bands(loader: 'ImageDataLoader') -> None:
+    """Drop B1 and B9 from a 12-band Sentinel-2 raster loader in place."""
+    loader.data = loader.data[:, :, S2_TD_KEEP_INDICES]
+
+
+# =============================================================================
 # Base Detector
 # =============================================================================
 
@@ -468,8 +484,16 @@ def _run_mlp_detection(
     negative_points_pixel: List[Tuple[int, int]],
     algorithm: str,
     selected_bands: Optional[List[int]] = None,
+    progress_callback=None,
 ) -> Dict:
-    """Dispatch to repo/Target_detection MLP models."""
+    """Dispatch to repo/Target_detection MLP models.
+
+    The MLP path trains a projector directly on CUDA. The shared
+    `_model_cache` singleton + its `_cache_prepared` field aren't
+    safe under concurrent calls, so we serialise the whole dispatch
+    through the global GPU lock. This also prevents concurrent training
+    from thrashing VRAM on a single low-spec GPU.
+    """
     import sys
     import os
     repo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'repo', 'Target_detection')
@@ -478,6 +502,7 @@ def _run_mlp_detection(
         sys.path.insert(0, repo_path)
 
     from inference import detect as mlp_detect
+    from .gpu_compute import _GPU_LOCK
 
     model_name = "new_method_mlp" if algorithm == "MLP_AMF" else "new_method_mlp_ace"
     cube = loader.data  # (H, W, C)
@@ -485,18 +510,60 @@ def _run_mlp_detection(
     print(f"TARGET DETECTION [MLP] - Running {model_name} on cube {cube.shape}")
     print(f"TARGET DETECTION [MLP] - pos_points={target_points_pixel}, neg_points={negative_points_pixel}")
 
-    result = mlp_detect(
-        cube=cube,
-        pos_points=target_points_pixel,
-        neg_points=negative_points_pixel,
-        model_name=model_name,
-        threshold=None,  # auto (Otsu)
-    )
+    with _GPU_LOCK:
+        result = mlp_detect(
+            cube=cube,
+            pos_points=target_points_pixel,
+            neg_points=negative_points_pixel,
+            model_name=model_name,
+            threshold=None,  # auto (Otsu)
+            progress_callback=progress_callback,
+        )
 
     score_map = result["score_map"]
     mask = result["mask"]
     threshold = result.get("threshold", 0.5)
-    loss_history = result.get("state", {}).get("loss_history", [])
+    loss_history = result.get("state", {}).get("projector_train_info", {}).get("loss_history", [])
+
+    # Validate score_map shape matches the input cube's (H, W). A common
+    # failure mode of the MLP path is returning a transposed or flattened
+    # map, which silently produces an empty overlay when warped to AOI.
+    expected_hw = cube.shape[:2]
+    score_map = np.asarray(score_map)
+    if score_map.shape != expected_hw:
+        print(
+            f"TARGET DETECTION [MLP] - WARNING score_map shape {score_map.shape} "
+            f"!= expected {expected_hw}; attempting reshape/transpose"
+        )
+        if score_map.size == expected_hw[0] * expected_hw[1]:
+            try:
+                score_map = score_map.reshape(expected_hw)
+            except Exception:
+                pass
+        elif score_map.shape[::-1] == expected_hw:
+            score_map = score_map.T
+    if score_map.shape != expected_hw:
+        raise ValueError(
+            f"MLP detection returned score_map shape {score_map.shape}; "
+            f"expected {expected_hw}. Cannot warp to AOI."
+        )
+
+    finite_count = int(np.isfinite(score_map).sum())
+    total = int(score_map.size)
+    if finite_count == 0:
+        raise ValueError(
+            "MLP detection produced a score_map with no finite values "
+            "(all NaN/Inf). Training likely failed."
+        )
+    if finite_count < total * 0.1:
+        print(
+            f"TARGET DETECTION [MLP] - WARNING only {finite_count}/{total} "
+            f"pixels are finite"
+        )
+    print(
+        f"TARGET DETECTION [MLP] - score_map OK shape={score_map.shape} "
+        f"finite={finite_count}/{total} threshold={threshold}"
+    )
 
     # Compute background stats for spectrum chart
     n_bg_samples = min(int(loader.n_pixels * 0.1), 10000)
@@ -543,7 +610,8 @@ def run_target_detection(
     algorithm: str = 'SAM',
     threshold_percentile: float = 95.0,
     auto_threshold: bool = True,
-    selected_bands: Optional[List[int]] = None
+    selected_bands: Optional[List[int]] = None,
+    progress_callback=None,
 ) -> Dict:
     """
     Run target detection on a raster image.
@@ -566,6 +634,10 @@ def run_target_detection(
     # Load image data
     loader = ImageDataLoader(raster_path)
     print(f"TARGET DETECTION - Loaded image: {loader.shape} (H x W x Bands)")
+
+    # Hardcoded: exclude 60m bands (B1, B9) for Sentinel-2 cloud rasters.
+    drop_s2_60m_bands(loader)
+    print(f"TARGET DETECTION - After 60m drop: {loader.shape} (H x W x Bands)")
 
     # Apply band selection if specified
     if selected_bands is not None and len(selected_bands) > 0:
@@ -593,7 +665,7 @@ def run_target_detection(
     if algorithm_upper in MLP_ALGORITHMS:
         return _run_mlp_detection(
             loader, target_points_pixel, negative_points_pixel,
-            algorithm_upper, selected_bands,
+            algorithm_upper, selected_bands, progress_callback,
         )
 
     # --- Classical detector path ---

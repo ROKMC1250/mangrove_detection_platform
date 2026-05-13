@@ -11,7 +11,7 @@
 class SpectralInspectorController {
     constructor(platformController) {
         this.platform = platformController;
-        this.activeMode = null; // 'point' | 'area' | null
+        this.activeMode = null; // 'point' | null
         this.markers = L.layerGroup();
 
         // Accumulation state
@@ -25,7 +25,9 @@ class SpectralInspectorController {
         this.combinedChart = null;
 
         this._boundPointClick = this._handlePointClick.bind(this);
-        this._areaDrawer = null;
+
+        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.5
+        this._slotStash = { A: null, B: null };
 
         this.init();
     }
@@ -40,8 +42,7 @@ class SpectralInspectorController {
             this.markers.addTo(map);
         }
 
-        document.getElementById('spectral-point-tool')?.addEventListener('click', () => this.activatePointTool());
-        document.getElementById('spectral-area-tool')?.addEventListener('click', () => this.activateAreaTool());
+        document.getElementById('spectral-point-tool')?.addEventListener('click', () => this._togglePointTool());
         document.getElementById('spectral-clear-btn')?.addEventListener('click', () => this.clearAll());
     }
 
@@ -63,9 +64,19 @@ class SpectralInspectorController {
         return this.colorPalette[this.nextColorIdx++ % this.colorPalette.length];
     }
 
-    // ===== Tools =====
+    // ===== Toggle Tools =====
 
-    activatePointTool() {
+    _togglePointTool() {
+        if (this.activeMode === 'point') {
+            this.deactivate();
+        } else {
+            this._activatePointTool();
+        }
+    }
+
+    // ===== Activate Tools =====
+
+    _activatePointTool() {
         this.deactivate();
         this.activeMode = 'point';
         this._setButtonActive('spectral-point-tool');
@@ -78,39 +89,14 @@ class SpectralInspectorController {
         }
     }
 
-    activateAreaTool() {
-        this.deactivate();
-        this.activeMode = 'area';
-        this._setButtonActive('spectral-area-tool');
-        this._setStatus('Draw a rectangle on the map.');
-
-        const map = window.mapManager?.map;
-        if (!map) return;
-
-        map.getContainer().classList.add('spectral-cursor');
-        this._areaDrawer = new L.Draw.Rectangle(map, {
-            shapeOptions: { color: '#999', weight: 2, fillOpacity: 0.1 }
-        });
-        this._areaDrawer.enable();
-
-        map.once(L.Draw.Event.CREATED, (e) => {
-            this._sampleArea(e.layer);
-        });
-    }
-
     deactivate() {
         const map = window.mapManager?.map;
         if (map) {
             map.off('click', this._boundPointClick);
             map.getContainer().classList.remove('spectral-cursor');
         }
-        if (this._areaDrawer) {
-            this._areaDrawer.disable();
-            this._areaDrawer = null;
-        }
         this.activeMode = null;
         document.getElementById('spectral-point-tool')?.classList.remove('active');
-        document.getElementById('spectral-area-tool')?.classList.remove('active');
     }
 
     clearAll() {
@@ -131,9 +117,83 @@ class SpectralInspectorController {
         this._setStatus('Select a tool and click on the map.');
     }
 
+    // ========== Per-slot stash (Time A / Time B) ==========
+
+    _freezeToSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        // Unbind any active click/draw tool before we detach from the map.
+        this.deactivate();
+
+        // Detach the layerGroup wholesale — point markers + area rectangles
+        // inside remain attached to it and are preserved.
+        const map = window.mapManager?.map;
+        if (map && this.markers) {
+            try { this.markers.removeFrom(map); } catch (e) { /* no-op */ }
+        }
+
+        // Chart.js instances bind to specific <canvas> elements; since
+        // _renderEntries will recreate those canvases on thaw, destroy the
+        // current instances here to release handles cleanly.
+        Object.values(this.entryCharts || {}).forEach(c => {
+            try { c.destroy(); } catch (e) { /* no-op */ }
+        });
+        if (this.combinedChart) {
+            try { this.combinedChart.destroy(); } catch (e) { /* no-op */ }
+        }
+
+        this._slotStash[slotId] = {
+            entries: this.entries.slice(),
+            nextColorIdx: this.nextColorIdx,
+            markers: this.markers,   // L.layerGroup (detached from map above)
+        };
+
+        // Reset live fields — _thawFromSlot will refill them.
+        this.entryCharts = {};
+        this.combinedChart = null;
+    }
+
+    _thawFromSlot(slotId) {
+        const stash = (slotId === 'A' || slotId === 'B') ? this._slotStash[slotId] : null;
+        if (stash) {
+            this.entries = Array.isArray(stash.entries) ? stash.entries.slice() : [];
+            this.nextColorIdx = stash.nextColorIdx || 0;
+            this.markers = stash.markers || L.layerGroup();
+            this._slotStash[slotId] = null;
+        } else {
+            this.entries = [];
+            this.nextColorIdx = 0;
+            this.markers = L.layerGroup();
+        }
+        const map = window.mapManager?.map;
+        if (map && this.markers) {
+            try { this.markers.addTo(map); } catch (e) { /* no-op */ }
+        }
+    }
+
+    /**
+     * Swap inspector state between slots. `#spectral-entries` always lives in
+     * its own right-panel tab, so we always re-render; that recreates the
+     * per-entry <canvas> elements and rebinds Chart.js.
+     */
+    handleSlotChange(oldSlot, newSlot) {
+        if (oldSlot === newSlot) return;
+        this._freezeToSlot(oldSlot);
+        this._thawFromSlot(newSlot);
+        if (typeof this._renderEntries === 'function') this._renderEntries();
+        if (typeof this._updateCombinedChart === 'function') this._updateCombinedChart();
+        if (typeof this._setStatus === 'function') {
+            this._setStatus(this.entries.length === 0
+                ? 'Select a tool and click on the map.'
+                : `${this.entries.length} entr${this.entries.length > 1 ? 'ies' : 'y'} collected.`);
+        }
+    }
+
     // ===== Point Click =====
 
     async _handlePointClick(e) {
+        // Ignore clicks from other Leaflet interactions (e.g. draw)
+        if (this.activeMode !== 'point') return;
+
         const { lat, lng } = e.latlng;
         const color = this._nextColor();
 
@@ -151,159 +211,35 @@ class SpectralInspectorController {
 
         this._setStatus(`Fetching values at (${lat.toFixed(5)}, ${lng.toFixed(5)})...`);
 
-        const [bandsData, overlayValues] = await Promise.all([
-            this._getSpectralValues(lat, lng),
-            this._getOverlayValues(lat, lng)
-        ]);
-
-        if (bandsData?.bands?.length > 0) {
-            this.entries.push({
-                id: Date.now(),
-                type: 'point',
-                color,
-                latlng: { lat, lng },
-                bands: bandsData.bands,
-                stdBands: null,
-                overlayValues,
-                marker
-            });
-            this._renderEntries();
-            this._updateCombinedChart();
-            this._setStatus(`Point: (${lat.toFixed(5)}, ${lng.toFixed(5)}) — ${bandsData.bands.length} bands`);
-        } else {
-            this._setStatus(bandsData?.error || 'No data at this location.');
-        }
-    }
-
-    // ===== Area Sampling =====
-
-    async _sampleArea(rectangleLayer) {
-        const color = this._nextColor();
-        const map = window.mapManager?.map;
-
-        // Create a new rectangle on spectralPane (original draw layer may not support pane change)
-        const bounds = rectangleLayer.getBounds();
-        const visibleRect = L.rectangle(bounds, {
-            color, fillColor: color, fillOpacity: 0.15, weight: 2, dashArray: '6,4',
-            pane: 'spectralPane', interactive: false
-        });
-        if (map) visibleRect.addTo(map);
-        this.markers.addLayer(visibleRect);
-
-        this._setStatus('Sampling area...');
-
-        // Uploaded (load-image) mode or band-registration mode — sample individually
-        if (this._isUploadedMode() || this._isLocalMode()) {
-            await this._sampleAreaLocal(bounds, color, visibleRect);
-            return;
-        }
-
-        // Satellite mode — use bulk API
-        const points = this._generateGridPoints(bounds, 5, 5);
-        const imageId = this.platform.selectedImageId || this.platform.currentProcessedImageId;
-        const bbox = window.mapManager?.getCurrentBounds();
-        if (!imageId || !bbox) {
-            this._setStatus('No processed image available.');
-            this.activateAreaTool();
-            return;
-        }
-
         try {
-            const res = await fetch('/api/get-area-spectral-stats', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image_id: imageId, bbox, points })
-            });
-            if (!res.ok) { this._setStatus('Failed to fetch area stats.'); this.activateAreaTool(); return; }
-            const data = await res.json();
+            const [bandsData, overlayValues] = await Promise.all([
+                this._getSpectralValues(lat, lng),
+                this._getOverlayValues(lat, lng)
+            ]);
 
-            if (!data.mean_bands?.length) {
-                this._setStatus(data.error || 'No data in area.');
-                this.activateAreaTool();
-                return;
-            }
-
-            const center = bounds.getCenter();
-            const overlayValues = await this._getOverlayValues(center.lat, center.lng);
-
-            this.entries.push({
-                id: Date.now(),
-                type: 'area',
-                color,
-                bounds: { south: bounds.getSouth(), west: bounds.getWest(), north: bounds.getNorth(), east: bounds.getEast() },
-                bands: data.mean_bands,
-                stdBands: data.std_bands,
-                overlayValues,
-                mapLayer: visibleRect,
-                sampleCount: data.sample_count
-            });
-
-            this._renderEntries();
-            this._updateCombinedChart();
-            this._setStatus(`Area: ${data.sample_count} samples, ${data.mean_bands.length} bands`);
-        } catch {
-            this._setStatus('Error sampling area.');
-        }
-
-        this.activateAreaTool();
-    }
-
-    async _sampleAreaLocal(bounds, color, visibleRect) {
-        const points = this._generateGridPoints(bounds, 5, 5);
-
-        const allBands = [];
-        for (const pt of points) {
-            const data = await this._getSpectralValues(pt.lat, pt.lng);
-            if (data?.bands?.length) allBands.push(data.bands);
-        }
-
-        if (allBands.length === 0) {
-            this._setStatus('No data in area.');
-            this.activateAreaTool();
-            return;
-        }
-
-        const meanBands = allBands[0].map((b, i) => {
-            const vals = allBands.map(s => s[i].value);
-            const mean = vals.reduce((a, v) => a + v, 0) / vals.length;
-            return { name: b.name, value: Math.round(mean * 100) / 100 };
-        });
-        const stdBands = allBands[0].map((b, i) => {
-            const vals = allBands.map(s => s[i].value);
-            const mean = vals.reduce((a, v) => a + v, 0) / vals.length;
-            const variance = vals.reduce((a, v) => a + (v - mean) ** 2, 0) / vals.length;
-            return { name: b.name, value: Math.round(Math.sqrt(variance) * 100) / 100 };
-        });
-
-        const center = bounds.getCenter();
-        const overlayValues = await this._getOverlayValues(center.lat, center.lng);
-
-        this.entries.push({
-            id: Date.now(), type: 'area', color,
-            bounds: { south: bounds.getSouth(), west: bounds.getWest(), north: bounds.getNorth(), east: bounds.getEast() },
-            bands: meanBands, stdBands, overlayValues,
-            mapLayer: visibleRect, sampleCount: allBands.length
-        });
-
-        this._renderEntries();
-        this._updateCombinedChart();
-        this._setStatus(`Area: ${allBands.length} samples, ${meanBands.length} bands`);
-        this.activateAreaTool();
-    }
-
-    _generateGridPoints(bounds, rows, cols) {
-        const points = [];
-        const latStep = (bounds.getNorth() - bounds.getSouth()) / (rows + 1);
-        const lngStep = (bounds.getEast() - bounds.getWest()) / (cols + 1);
-        for (let r = 1; r <= rows; r++) {
-            for (let c = 1; c <= cols; c++) {
-                points.push({
-                    lat: bounds.getSouth() + latStep * r,
-                    lng: bounds.getWest() + lngStep * c
+            if (bandsData?.bands?.length > 0) {
+                this.entries.push({
+                    id: Date.now(),
+                    type: 'point',
+                    color,
+                    latlng: { lat, lng },
+                    bands: bandsData.bands,
+                    stdBands: null,
+                    overlayValues,
+                    marker
                 });
+                this._renderEntries();
+                this._updateCombinedChart();
+                this._setStatus(`Point: (${lat.toFixed(5)}, ${lng.toFixed(5)}) — ${bandsData.bands.length} bands`);
+            } else {
+                this.markers.removeLayer(marker);
+                this._setStatus(bandsData?.error || 'No data at this location.');
             }
+        } catch (err) {
+            console.error('[SpectralInspector] Point click error:', err);
+            this.markers.removeLayer(marker);
+            this._setStatus('Error fetching spectral data.');
         }
-        return points;
     }
 
     // ===== API =====
@@ -362,15 +298,20 @@ class SpectralInspectorController {
     }
 
     async _getOverlayValues(lat, lng) {
-        // Read all visible layers from layer control panel
+        // Pull analysis layers from BOTH slots + any live overlays that
+        // weren't registered through the panel (e.g. local CRS.Simple mode).
+        // Behaviour is the same for satellite search and local image modes —
+        // we just query whichever layers currently exist.
         const layerPanel = this.platform.layerControlPanel;
-        const panelLayers = layerPanel?.getVisibleLayers() || [];
+        const bySlot = layerPanel?.getAllAnalysisLayersBySlot?.() || { A: [], B: [] };
+        const crossSlotIds = [...bySlot.A, ...bySlot.B]
+            .filter(l => l.type === 'analysis')
+            .map(l => l.id);
 
-        // Also check mapManager's analysis layers as fallback
         const analysisLayers = window.mapManager?.analysisLayers || {};
         const allModelIds = new Set([
-            ...panelLayers.filter(l => l.type === 'analysis').map(l => l.id),
-            ...Object.keys(analysisLayers)
+            ...crossSlotIds,
+            ...Object.keys(analysisLayers),
         ]);
 
         // Exclude base images, tiles, masks, segmentation
@@ -420,7 +361,7 @@ class SpectralInspectorController {
                 // Generate readable label
                 let label = labelMap[modelId] || modelId;
                 if (modelId.startsWith('td-')) label = 'TD';
-                else if (modelId.startsWith('sam2-')) label = 'SAM2';
+                else if (modelId.startsWith('sam3-')) label = 'SAM3';
                 else if (modelId.startsWith('spectral-')) label = 'Index';
                 else if (modelId.startsWith('custom-result-')) label = 'Custom';
 
@@ -449,13 +390,8 @@ class SpectralInspectorController {
             card.className = 'spectral-entry-card';
             card.style.borderLeft = `4px solid ${entry.color}`;
 
-            const typeIcon = entry.type === 'point' ? '◆' : '⬜';
-            let coordText = '';
-            if (entry.type === 'point') {
-                coordText = `(${entry.latlng.lat.toFixed(4)}, ${entry.latlng.lng.toFixed(4)})`;
-            } else {
-                coordText = `Area (${entry.sampleCount} samples)`;
-            }
+            const typeIcon = '◆';
+            const coordText = `(${entry.latlng.lat.toFixed(4)}, ${entry.latlng.lng.toFixed(4)})`;
 
             // Build layer tabs
             const tabs = this._buildLayerTabs(entry);

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mangrove Detection Platform v2.0 — a web-based satellite image analysis platform for mangrove and vegetation detection using Sentinel-2, Sentinel-1, and EMIT imagery via Google Earth Engine.
+EarthScope v2.0 — a web-based satellite image analysis platform for Earth observation (vegetation, mangrove, target detection, change detection, segmentation) using Sentinel-2, Sentinel-1, and EMIT imagery via Google Earth Engine.
 
 ## Running the Application
 
@@ -46,6 +46,10 @@ pip install -r backend/requirements.txt
   - `routes_analysis.py` — spectral analysis and visualization
   - `routes_download.py` — file download endpoints
   - `routes_target_detection.py` — hyperspectral target detection
+  - `routes_sam3.py` — SAM3 segmentation (point/box + text/PCS modes)
+  - `routes_mangrove_segmentation.py` — Segformer/UNet++ inference
+  - `routes_change_detection.py` — Time A vs Time B mask comparison
+  - `routes_local.py` — uploaded GeoTIFF endpoints (mirrors of all cloud features)
   - `schemas.py` — Pydantic request/response models
 - `backend/services/` — business logic:
   - `earth_engine.py` — GEE initialization and collection management
@@ -53,6 +57,7 @@ pip install -r backend/requirements.txt
   - `model_inference.py` — Segformer/UNet++ PyTorch segmentation (patch-based, optional)
   - `spectral_analysis.py` — NDVI, NDMI, MVI calculations
   - `target_detection.py` — SAM, ACE, RXD, CEM algorithms
+  - `sam3_service.py` — SAM3 model loader & encode/predict/predict_text wrappers
   - `visualization.py` — image rendering, band stretching, PNG generation
 - `backend/core/config.py` — paths, constants, GEE credentials, HTTP pooling, band definitions
 - `backend/core/progress.py` — thread-safe job progress tracking with phase weights
@@ -88,6 +93,16 @@ pip install -r backend/requirements.txt
 - **Model graceful degradation:** Segmentation model is optional; platform works without it for spectral analysis and visualization
 - **Parallel downloads:** Mosaic builder uses 6 parallel workers for tile downloads from GEE
 - **In-memory caching:** Raster data, spectral indices, and visualization results are cached
+
+### Dual-path architecture (cloud vs local) — ALWAYS EDIT BOTH
+
+Every analysis feature — **target detection, spectral analysis, SAM3, change detection, Time A / Time B** — has two parallel implementations that must stay in lockstep:
+
+- **Cloud (satellite search / GEE) path:** `backend/api/routes_target_detection.py`, `routes_mangrove_segmentation.py`, `routes_sam3.py`, `routes_change_detection.py`. Caches: `TARGET_DETECTION_CACHE`, `MANGROVE_SEG_CACHE`, `SAM3_MASK_CACHE`, `CHANGE_DETECTION_CACHE`. Results carry `transform` / `crs` / `bbox`; overlays are warped to AOI via `warp_rgb_and_mask_to_aoi(scale_m=10)` and placed on the Leaflet map.
+- **Local / uploaded image path:** `backend/api/routes_local.py` (`/api/local/...` and `/api/local/uploaded/...` endpoints). Caches: `_LOCAL_TD_CACHE`, `_LOCAL_INDEX_CACHE`, `_LOCAL_RASTER_CACHE`; the SAM3 cache is shared with the cloud path (`SAM3_MASK_CACHE`, with `transform`/`crs` set to `None` for uploaded entries). Results have no CRS/transform; overlays are encoded at native pixel resolution.
+- **Frontend controllers** branch on `isLocalMode()` and route overlays through either `mapManager.showAnalysisLayer` (cloud, geo bounds) or `localImage.showLocalAnalysisLayer` (local, pixel size).
+
+**Rule:** Any fix, refactor, or new feature touching one path **must be applied to the other at the same time**. When grep-ing to scope a change, always search both `routes_*.py` and `routes_local.py`, and both the cloud cache names and the `_LOCAL_*_CACHE` names. Report completion as "cloud + local both updated" (or explicitly flag when a change legitimately applies to only one side, e.g. bbox handling).
 
 ## Notes
 

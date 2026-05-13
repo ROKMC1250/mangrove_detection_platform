@@ -1,0 +1,374 @@
+INFO:     Will watch for changes in these directories: ['/home/hjh1037/Platform']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [2827538] using WatchFiles
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+INFO:     Started server process [2827552]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+✅ Model config loaded from: /home/hjh1037/Platform/backend/model_config.yaml
+GPU Compute: CUDA=available
+Earth Engine initialized successfully
+🚀 Starting Mangrove Platform Backend...
+MODEL - loaded config from /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/config.yaml
+MODEL - Creating model: Segformer
+  encoder: mit_b2, in_channels: 13, classes: 1
+MODEL - Loading checkpoint: /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/weights/last.pt
+✅ MODEL - Segformer loaded successfully on cuda:0
+✅ Segmentation model loaded successfully
+🔄 SAM3 - Loading model on cuda...
+✅ SAM3 - Model loaded successfully on cuda
+✅ SAM3 model loaded successfully
+INFO:     10.0.10.57:60592 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60592 - "GET / HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60600 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60600 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60600 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60592 - "GET /static/js/map-layers.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:60614 - "GET /static/map.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:60624 - "GET /static/js/local-image-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60636 - "GET /static/script.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:60626 - "GET /static/js/symbology-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60600 - "POST /api/session/acquire HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34928 - "GET /health HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60624 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60600 - "GET /api/local/images HTTP/1.1" 200 OK
+INFO:     10.0.10.57:36494 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'backend/api/schemas.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2827552]
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+WARNING:  WatchFiles detected changes in 'backend/api/schemas.py'. Reloading...
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+WARNING:  WatchFiles detected changes in 'backend/api/schemas.py'. Reloading...
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+INFO:     Started server process [2828804]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+✅ Model config loaded from: /home/hjh1037/Platform/backend/model_config.yaml
+GPU Compute: CUDA=available
+Earth Engine initialized successfully
+🚀 Starting Mangrove Platform Backend...
+MODEL - loaded config from /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/config.yaml
+MODEL - Creating model: Segformer
+  encoder: mit_b2, in_channels: 13, classes: 1
+MODEL - Loading checkpoint: /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/weights/last.pt
+✅ MODEL - Segformer loaded successfully on cuda:0
+✅ Segmentation model loaded successfully
+🔄 SAM3 - Loading model on cuda...
+✅ SAM3 - Model loaded successfully on cuda
+✅ SAM3 model loaded successfully
+INFO:     10.0.10.57:59560 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59560 - "GET / HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59570 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59570 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59570 - "GET /static/styles.css HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:59560 - "GET /static/js/local-image-controller.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:59584 - "GET /static/js/symbology-controller.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:59560 - "POST /api/session/acquire HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59584 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     10.0.10.57:59560 - "GET /api/local/images HTTP/1.1" 200 OK
+INFO:     10.0.10.57:54136 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:43014 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:50934 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:38638 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:44038 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:37376 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:35934 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:55504 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:35532 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60868 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET / HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /static/styles.css HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60868 - "GET /static/js/session-gate.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60870 - "GET /static/js/map-core.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60884 - "GET /static/js/map-drawing.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60890 - "GET /static/js/map-layers.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60900 - "GET /static/js/map-file-loader.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /static/js/image-processor.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60870 - "GET /static/js/search-results.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60868 - "GET /static/js/api-client.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60884 - "GET /static/map.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60890 - "GET /static/js/ui-manager.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60900 - "GET /static/js/image-search.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /static/js/custom-visualization.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60900 - "GET /static/js/sam3-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60890 - "GET /static/js/target-detection.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60870 - "GET /static/js/analysis-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60868 - "GET /static/js/threshold-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60884 - "GET /static/js/mangrove-segmentation-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60890 - "GET /static/js/spectral-analysis-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /static/js/spectral-inspector.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60900 - "GET /static/js/local-image-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60868 - "GET /static/js/dual-map-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60870 - "GET /static/js/layer-control-panel.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60884 - "GET /static/js/change-detection-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /static/script.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:60890 - "GET /static/js/symbology-controller.js HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "POST /api/session/acquire HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     10.0.10.57:60890 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33482 - "GET /api/local/images HTTP/1.1" 200 OK
+SEARCH - Starting search with params: start=2026-03-27, end=2026-04-27, cloud_max=20, limit=50
+SEARCH - Fetching 50 results from Earth Engine...
+SEARCH - Got 3 features
+SEARCH - Returning 3 results
+INFO:     10.0.10.57:39236 - "POST /api/search-images HTTP/1.1" 200 OK
+S1 SEARCH - Starting search with params: start=2026-03-27, end=2026-04-27, limit=50
+S1 SEARCH - Fetching 50 results from Earth Engine...
+S1 SEARCH - Got 5 features
+S1 SEARCH - Returning 5 results
+INFO:     10.0.10.57:39236 - "POST /api/search-s1-images HTTP/1.1" 200 OK
+INFO:     10.0.10.57:40592 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:48882 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+TILE - getMapId took 0.57s, total 0.57s for 20260416T021601_20260416T023451_T50PQS
+INFO:     10.0.10.57:38390 - "POST /api/get-gee-tile HTTP/1.1" 200 OK
+INFO:     10.0.10.57:39102 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'backend/services/gpu_compute.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2828804]
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+INFO:     Started server process [2832110]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+✅ Model config loaded from: /home/hjh1037/Platform/backend/model_config.yaml
+GPU Compute: CUDA=available
+Earth Engine initialized successfully
+🚀 Starting Mangrove Platform Backend...
+MODEL - loaded config from /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/config.yaml
+MODEL - Creating model: Segformer
+  encoder: mit_b2, in_channels: 13, classes: 1
+MODEL - Loading checkpoint: /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/weights/last.pt
+✅ MODEL - Segformer loaded successfully on cuda:0
+✅ Segmentation model loaded successfully
+🔄 SAM3 - Loading model on cuda...
+✅ SAM3 - Model loaded successfully on cuda
+✅ SAM3 model loaded successfully
+INFO:     10.0.10.57:57330 - "POST /api/get-s2-tile-custom HTTP/1.1" 423 Locked
+INFO:     10.0.10.57:57346 - "POST /api/get-s2-tile-custom HTTP/1.1" 423 Locked
+WARNING:  WatchFiles detected changes in 'backend/api/routes_local.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [2832110]
+/home/hjh1037/Platform/venv/lib/python3.12/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+INFO:     Started server process [2832375]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+✅ Model config loaded from: /home/hjh1037/Platform/backend/model_config.yaml
+GPU Compute: CUDA=available
+Earth Engine initialized successfully
+🚀 Starting Mangrove Platform Backend...
+MODEL - loaded config from /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/config.yaml
+MODEL - Creating model: Segformer
+  encoder: mit_b2, in_channels: 13, classes: 1
+MODEL - Loading checkpoint: /home/hjh1037/Platform/repo/mangrove_segmentation/checkpoints/segformer_MVI_v1/weights/last.pt
+✅ MODEL - Segformer loaded successfully on cuda:0
+✅ Segmentation model loaded successfully
+🔄 SAM3 - Loading model on cuda...
+✅ SAM3 - Model loaded successfully on cuda
+✅ SAM3 model loaded successfully
+INFO:     10.0.10.57:33968 - "POST /api/get-s2-tile-custom HTTP/1.1" 423 Locked
+INFO:     10.0.10.57:33956 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33956 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33956 - "GET / HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33956 - "POST /api/session/release HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33956 - "GET /static/styles.css HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:33968 - "GET /static/js/local-image-controller.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:36876 - "GET /static/js/symbology-controller.js HTTP/1.1" 304 Not Modified
+INFO:     10.0.10.57:36876 - "POST /api/session/acquire HTTP/1.1" 200 OK
+INFO:     10.0.10.57:33968 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     10.0.10.57:36876 - "GET /api/local/images HTTP/1.1" 200 OK
+INFO:     10.0.10.57:38472 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:58766 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:50682 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:54668 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:36382 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:48016 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:38888 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:35602 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:36022 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:49200 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:41880 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:47720 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:47672 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:51958 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+INFO:     10.0.10.57:41368 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+SEARCH - Starting search with params: start=2026-03-27, end=2026-04-27, cloud_max=20, limit=50
+SEARCH - Fetching 50 results from Earth Engine...
+SEARCH - Got 3 features
+SEARCH - Returning 3 results
+INFO:     10.0.10.57:50844 - "POST /api/search-images HTTP/1.1" 200 OK
+S1 SEARCH - Starting search with params: start=2026-03-27, end=2026-04-27, limit=50
+S1 SEARCH - Fetching 50 results from Earth Engine...
+S1 SEARCH - Got 5 features
+S1 SEARCH - Returning 5 results
+INFO:     10.0.10.57:50844 - "POST /api/search-s1-images HTTP/1.1" 200 OK
+TILE - getMapId took 0.50s, total 0.50s for 20260416T021601_20260416T023451_T50PQS
+INFO:     10.0.10.57:50844 - "POST /api/get-gee-tile HTTP/1.1" 200 OK
+PROGRESS API - No data found for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385, returning pending
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROCESS IMAGE - Using job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - Created job 20260416T021601_20260416T023451_T50PQS-1777273348385 with 6 phases
+PROGRESS - Started phase 'Initialization' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Initialization: step 1/3 - Setting up AOI geometry
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Initialization: step 2/3 - Resolving image reference
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Initialization: step 3/3 - Preparing for download
+PROGRESS - Completed phase 'Initialization' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - Started phase 'Download' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+DOWNLOAD - Estimated: 458x468 pixels, 5.57MB
+DOWNLOAD - Using single tile download: 5.57MB
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Download: step 0/1 - Downloading single tile - 5.6MB
+DOWNLOAD - Starting getDownloadURL (as_float=False)...
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+DOWNLOAD - getDownloadURL took 0.66s
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 9.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+DOWNLOAD - HTTP request took 3.31s, total: 3.97s
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Download: step 0/1 - Writing to file
+DOWNLOAD - Completed in 4.29s
+PROGRESS - Completed phase 'Download' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+CACHE - Stored raster: 20260416T021601_20260416T023451_T50PQS_f3a555566f -> /home/hjh1037/Platform/outputs/process_20260416T021601_20260416T023451_T50PQS_1777273348.tif
+PROGRESS - Started phase 'Model Inference' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Model Inference: step 0/1 - Generating cloud mask
+CLOUD MASK - Generating cloud mask for 20260416T021601_20260416T023451_T50PQS
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+WARNING:rasterio._env:CPLE_AppDefined in TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+CLOUD MASK - Downloaded mask shape: (237, 231)
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 48.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+WARNING:rasterio._env:CPLE_AppDefined in TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+CLOUD MASK - Created overlay (base64, no file)
+PROGRESS - Completed phase 'Model Inference' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - Started phase 'GPU Loading' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/GPU Loading: step 1/2 - Loading bands to GPU
+GPU CACHE - Loaded 20260416T021601_20260416T023451_T50PQS_f3a555566f: torch.Size([472, 461, 12]), cuda:0, 10MB
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/GPU Loading: step 2/2 - GPU loading complete
+PROGRESS - Completed phase 'GPU Loading' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+ALPHAEARTH - Processing embedding data for 20260416T021601_20260416T023451_T50PQS
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+ALPHAEARTH - Year 2026 not available, using 2024
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+INFO:     10.0.10.57:50844 - "POST /api/session/heartbeat HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 85.0% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS - Started phase 'Visualization' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Visualization: step 1/3 - Aligning overlays to AOI
+WARP - Geometry mask applied, valid pixels: 214344
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Visualization: step 2/3 - Generating thumbnails
+PROGRESS API - Returning data for job_id: 20260416T021601_20260416T023451_T50PQS-1777273348385 -> 91.7% (running)
+INFO:     10.0.10.57:50844 - "GET /api/progress?job_id=20260416T021601_20260416T023451_T50PQS-1777273348385 HTTP/1.1" 200 OK
+PROGRESS - Completed phase 'Visualization' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - Started phase 'Finalization' for job 20260416T021601_20260416T023451_T50PQS-1777273348385
+PROGRESS - 20260416T021601_20260416T023451_T50PQS-1777273348385/Finalization: step 1/1 - Preparing final results
+TIMING - total process_image: 9.49s
+PROGRESS - Completed job 20260416T021601_20260416T023451_T50PQS-1777273348385
+INFO:     10.0.10.57:58632 - "POST /api/process-image HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+WARNING:rasterio._env:CPLE_AppDefined in TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - Encoding image ((461, 472))...
+✅ SAM3 - Image encoded (key: 20260416T021601_20260416...)
+🔄 SAM3 - set_text_prompt: 'cloud'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:50794 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'land'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:39896 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+WARNING:rasterio._env:CPLE_AppDefined in process_20260416T021601_20260416T023451_T50PQS_1777273348.tif: TIFFReadDirectory:Sum of Photometric type-related color channels and ExtraSamples doesn't match SamplesPerPixel. Defining non-color channels as ExtraSamples.
+🔄 SAM3 - set_text_prompt: 'road'
+✅ SAM3 - text mode produced 0 instance(s) (threshold=0.5)
+INFO:     10.0.10.57:52380 - "POST /api/sam3/text-predict HTTP/1.1" 200 OK
+INFO:     10.0.10.57:52380 - "POST /api/session/heartbeat HTTP/1.1" 200 OK

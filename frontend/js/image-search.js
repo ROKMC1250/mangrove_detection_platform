@@ -306,12 +306,12 @@ class ImageSearchController {
             this.selectedSatellite = null;
             this.platform.selectedImageId = null;
             this.platform.selectedSatelliteType = null;
-            
+
             // Remove selection highlight
             document.querySelectorAll('.image-item').forEach(item => {
                 item.classList.remove('selected');
             });
-            
+
             // Remove all layers related to this image from map
             if (window.mapManager) {
                 // Remove preview layer
@@ -322,16 +322,27 @@ class ImageSearchController {
                 // Also clear any image layers
                 window.mapManager.clearImageLayers();
             }
-            
+            this._setAnalyzeAvailable(true);
+
             this.platform.showNotification('Image hidden from map', 'info');
             return;
         }
+
+        // Selecting a different image — hide whatever preview is currently
+        // on the map so that only one Sentinel image is shown at a time.
+        // Covers both same-satellite re-selection and switching across
+        // Sentinel-1 / Sentinel-2 tabs.
+        this._clearAllPreviewLayers();
 
         // Select new image
         this.selectedImageId = imageId;
         this.selectedSatellite = satellite;
         this.platform.selectedImageId = imageId;
         this.platform.selectedSatelliteType = satellite;
+        // Sentinel-1 has no spectral analysis path — keep the Analyze
+        // button locked while an S1 image is the active selection,
+        // regardless of which satellite tab is currently open.
+        this._setAnalyzeAvailable(satellite !== 's1');
 
         // Highlight selected item
         document.querySelectorAll('.image-item').forEach(item => {
@@ -399,6 +410,42 @@ class ImageSearchController {
     /**
      * Get currently selected image
      */
+    /**
+     * Hide every Sentinel preview that's currently on the map. Called when
+     * the user picks a different image — we want only one satellite preview
+     * visible at a time, even across S1 / S2 tabs.
+     */
+    _clearAllPreviewLayers() {
+        if (!window.mapManager) return;
+        const tileLayers = window.mapManager.tileLayers || {};
+        for (const id of Object.keys(tileLayers)) {
+            if (id.startsWith('preview-') || id.startsWith('s1-vis-') || id.startsWith('s2-vis-')) {
+                window.mapManager.hideTileLayer(id);
+            }
+        }
+        if (typeof window.mapManager.clearImageLayers === 'function') {
+            window.mapManager.clearImageLayers();
+        }
+        // Strip selection highlight from prior items so the panel reflects
+        // that nothing carries over.
+        document.querySelectorAll('.image-item.selected').forEach(item => {
+            item.classList.remove('selected');
+        });
+    }
+
+    /**
+     * Toggle the global "Analyze →" button. Sentinel-1 has no spectral
+     * analysis backend, so we lock the button while an S1 image is the
+     * active selection — see `viewImage` and the click guard in
+     * `script.js` which also rechecks at submit time.
+     */
+    _setAnalyzeAvailable(enabled) {
+        const btn = document.getElementById('open-analysis-btn');
+        if (!btn) return;
+        btn.disabled = !enabled;
+        btn.title = enabled ? '' : 'Analysis not available for Sentinel-1';
+    }
+
     getSelectedImage() {
         if (!this.selectedImageId) return null;
         

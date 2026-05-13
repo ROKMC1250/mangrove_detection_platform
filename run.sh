@@ -15,7 +15,8 @@ if lsof -ti:8000 &>/dev/null; then
 fi
 
 # --- Python environment setup via uv ---
-PYTHON_VERSION="3.11"
+# SAM3 requires Python 3.12+
+PYTHON_VERSION="3.12"
 
 # Check if uv is available
 if ! command -v uv &> /dev/null; then
@@ -64,11 +65,31 @@ fi
 # export MODEL1_LOG_DIR=/path/to/your/model/logs
 # export MODEL_ROOT=/path/to/your/model/root
 
+# Install PyTorch from the CUDA 12.8 wheel index (required by SAM3) before
+# the rest of the deps so it isn't downgraded to a CPU-only build.
+uv pip install --python "$VIRTUAL_ENV/bin/python" \
+    --index-url https://download.pytorch.org/whl/cu128 \
+    --index-strategy unsafe-best-match \
+    "torch>=2.7,<3" "torchvision>=0.22,<1"
+
 uv pip install --python "$VIRTUAL_ENV/bin/python" -r backend/requirements.txt
+
+# Install SAM3 from source if it isn't already available.
+# Checkpoints require HuggingFace authentication: run `hf auth login` once.
+if ! "$VIRTUAL_ENV/bin/python" -c "import sam3" >/dev/null 2>&1; then
+    echo "📦 Installing SAM3 from facebookresearch/sam3..."
+    uv pip install --python "$VIRTUAL_ENV/bin/python" \
+        "git+https://github.com/facebookresearch/sam3.git"
+fi
+
+# Default SAM3 checkpoint directory (can be overridden by env)
+if [ -z "${SAM3_CHECKPOINT_DIR:-}" ]; then
+    export SAM3_CHECKPOINT_DIR="$PROJECT_ROOT/repo/sam3"
+fi
 
 # Get IP addresses
 echo "======================================"
-echo "🚀 Starting Mangrove Platform Server"
+echo "🚀 Starting EarthScope Server"
 echo "======================================"
 echo ""
 echo "📍 Server will be accessible at:"
@@ -228,4 +249,4 @@ echo "📂 Frontend is served from /static/"
 echo "======================================"
 echo ""
 
-exec "$VIRTUAL_ENV/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload 
+exec "$VIRTUAL_ENV/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --no-access-log 

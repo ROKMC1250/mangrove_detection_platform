@@ -158,30 +158,35 @@ class MapDrawing {
             }
         });
 
-        // Drawing start event
+        // Drawing start event — raise overlay pane above data tiles so the
+        // draw guide rectangle is visible while dragging on Sentinel-2 tiles.
         map.on(L.Draw.Event.DRAWSTART, (event) => {
-            console.log('🎨 Drawing started');
+            console.log('Drawing started');
             const drawBtn = document.getElementById('draw-rectangle');
             if (drawBtn) {
                 drawBtn.disabled = true;
-                drawBtn.textContent = '✏️ Drawing...';
+                drawBtn.textContent = 'Drawing...';
             }
+            const overlayPane = map.getPane('overlayPane');
+            if (overlayPane) overlayPane.style.zIndex = 500;
         });
 
-        // Drawing stop event  
+        // Drawing stop event — restore overlay pane z-index
         map.on(L.Draw.Event.DRAWSTOP, (event) => {
-            console.log('🛑 Drawing stopped');
-            
+            console.log('Drawing stopped');
+
             if (this.currentDrawer) {
                 this.currentDrawer.disable();
                 this.currentDrawer = null;
             }
-            
+
             const drawBtn = document.getElementById('draw-rectangle');
             if (drawBtn) {
                 drawBtn.disabled = false;
-                drawBtn.textContent = '📍 Draw AOI';
+                drawBtn.textContent = 'Draw AOI';
             }
+            const overlayPane = map.getPane('overlayPane');
+            if (overlayPane) overlayPane.style.zIndex = '';
         });
     }
 
@@ -281,14 +286,14 @@ class MapDrawing {
     
     clearAnalysisUI() {
         // Clear inline search results
-        const resultContainers = ['search-results-s2', 'search-results-s1', 'search-results-emit'];
+        const resultContainers = ['search-results-s2', 'search-results-s1'];
         resultContainers.forEach(id => {
             const container = document.getElementById(id);
             if (container) container.innerHTML = '';
         });
-        
+
         // Hide inline results panels
-        const resultPanels = ['inline-results-s2', 'inline-results-s1', 'inline-results-emit'];
+        const resultPanels = ['inline-results-s2', 'inline-results-s1'];
         resultPanels.forEach(id => {
             const panel = document.getElementById(id);
             if (panel) panel.classList.add('hidden');

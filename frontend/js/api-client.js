@@ -75,14 +75,6 @@ class ApiClient {
         });
     }
 
-    // Change Monitoring
-    async startChangeMonitoring(params) {
-        return this.request('/api/change-monitoring', {
-            method: 'POST',
-            body: JSON.stringify(params)
-        });
-    }
-
     // Pixel Value Inspection
     async getPixelValue(lat, lng, modelId) {
         return this.request('/api/get-pixel-value', {
@@ -193,19 +185,6 @@ class ApiClient {
                 end_date: endDate,
                 cloud_cover_max: cloudCoverMax,
                 limit
-            })
-        });
-    }
-
-    // Process Spectral Image
-    async processSpectralImage(itemId, bbox, geometry = null, spectralMethod = 'ndvi') {
-        return this.request('/api/process-spectral-image', {
-            method: 'POST',
-            body: JSON.stringify({
-                item_id: itemId,
-                bbox,
-                geometry,
-                spectral_method: spectralMethod
             })
         });
     }

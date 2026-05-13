@@ -1,8 +1,5 @@
 """
 Image download module - Unified download logic for Earth Engine images.
-
-This module consolidates the download logic that was previously duplicated across
-multiple functions (process_image, change_monitoring, process_spectral_image, etc.)
 """
 
 import os

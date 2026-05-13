@@ -51,7 +51,7 @@ cd /d %~dp0
 python -m pip install -r backend\requirements.txt
 
 echo ======================================
-echo 🚀 Starting Mangrove Platform Server
+echo 🚀 Starting EarthScope Server
 echo ======================================
 echo.
 echo 📍 Server will be accessible at:

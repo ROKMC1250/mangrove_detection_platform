@@ -1,35 +1,61 @@
 """
 Cache management module for raster files, index data, and custom visualizations.
+
+All caches are bounded (LRU) and have TTLs so long-running servers do not
+accumulate memory indefinitely. See backend/utils/cache_service.py for the
+shared TTLCache implementation.
 """
 
+import hashlib
 import threading
-import numpy as np
 from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+from .cache_service import TTLCache
 
 
 # ===== Raster File Cache =====
 # Cache key format: {image_id}_{bbox_hash} to support different AOI bounds
-RASTER_FILE_CACHE: Dict[str, str] = {}  # {cache_key: file_path}
-RASTER_CACHE_LOCK = threading.Lock()
+# Entries are small (just file paths); bound primarily by disk-retention.
+RASTER_FILE_CACHE = TTLCache(maxsize=256, ttl=6 * 3600, name="raster_file")
+RASTER_CACHE_LOCK = threading.Lock()  # retained for backward compat; TTLCache is already thread-safe
 
 
 # ===== Custom Visualization Cache =====
-CUSTOM_VIZ_CACHE: Dict[str, Dict] = {}  # {custom_id: {type, bands, etc.}}
+CUSTOM_VIZ_CACHE = TTLCache(maxsize=512, ttl=2 * 3600, name="custom_viz")
 CUSTOM_VIZ_LOCK = threading.Lock()
 
 
 # ===== Index Data Cache =====
 # Cache key format: {image_id}_{model_id}
-INDEX_DATA_CACHE: Dict[str, Dict] = {}  # {cache_key: {data, transform, crs, bbox}}
+# Entries hold full numpy arrays — keep size tight to bound RSS.
+INDEX_DATA_CACHE = TTLCache(maxsize=32, ttl=30 * 60, name="index_data")
 INDEX_CACHE_LOCK = threading.Lock()
 
 
+def cache_key_for_images(image_ids: List[str], bbox: List[float]) -> str:
+    """Generate a deterministic cache key for one or more image_ids + bbox.
+
+    This is the generalised form used by multi-image workflows (e.g. Change
+    Detection, which needs (image_id_t1, image_id_t2, bbox)).
+    """
+    if isinstance(image_ids, str):
+        image_ids = [image_ids]
+    ids_part = "+".join(image_ids)
+    # Round bbox to ~10cm precision and hash deterministically (hashlib ≠ Python
+    # built-in hash() which is randomised per-process).
+    bbox_rounded = [round(float(v), 6) for v in bbox]
+    bbox_str = "_".join(f"{v:.6f}" for v in bbox_rounded)
+    digest = hashlib.sha1(bbox_str.encode("utf-8")).hexdigest()[:10]
+    return f"{ids_part}_{digest}"
+
+
 def bbox_to_cache_key(image_id: str, bbox: List[float]) -> str:
-    """Generate a cache key that includes both image_id and bbox hash."""
-    # Round bbox values to avoid floating point comparison issues (6 decimal places ~ 10cm precision)
-    bbox_rounded = [round(v, 6) for v in bbox]
-    bbox_str = "_".join([str(v) for v in bbox_rounded])
-    return f"{image_id}_{hash(bbox_str) & 0xFFFFFFFF}"  # Use positive hash
+    """Single-image cache key. Kept as the canonical name used throughout
+    the existing codebase; delegates to `cache_key_for_images`.
+    """
+    return cache_key_for_images([image_id], bbox)
 
 
 def get_cached_raster_path(image_id: str, bbox: List[float]) -> Optional[str]:

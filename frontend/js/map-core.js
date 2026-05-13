@@ -113,25 +113,26 @@ class MapCore {
     }
 
     createCustomPanes() {
-        // Pane z-index order: basemapPane (100) < tilePane (200) < dataPane (450) < aoiPane (500) < labelsPane (650)
-        
-        // Basemap pane - LOWEST z-index for base maps (OSM/Satellite)
+        // Pane z-index order: basemapPane (100) < tilePane (200) < dataPane (450) < analysisPane (475) < aoiPane (500) < labelsPane (650)
+
         this.map.createPane('basemapPane');
         this.map.getPane('basemapPane').style.zIndex = 100;
-        
-        // Data pane for analysis results (satellite tiles, NDVI overlays, etc.)
+
         this.map.createPane('dataPane');
         this.map.getPane('dataPane').style.zIndex = 450;
-        
-        // AOI pane for drawn items and KML polygons - ALWAYS on top of data
+
+        // Separate pane for analysis overlays (cloud mask, NDVI, segmentation, etc.)
+        // so adding/removing them doesn't force a repaint of the Sentinel-2 base image in dataPane.
+        this.map.createPane('analysisPane');
+        this.map.getPane('analysisPane').style.zIndex = 475;
+
         this.map.createPane('aoiPane');
         this.map.getPane('aoiPane').style.zIndex = 500;
-        
-        // Labels pane for map labels
+
         this.map.createPane('labelsPane');
         this.map.getPane('labelsPane').style.zIndex = 650;
-        
-        console.log('✅ Custom panes created: basemapPane (100), dataPane (450), aoiPane (500), labelsPane (650)');
+
+        console.log('✅ Custom panes created: basemapPane (100), dataPane (450), analysisPane (475), aoiPane (500), labelsPane (650)');
     }
 
     createBaseLayers() {
@@ -383,58 +384,41 @@ class MapCore {
     }
 
     bringDataLayersToFront() {
-        console.log('🔝 Bringing data layers to front...');
-        
+        console.log('🔝 Re-applying layer ordering...');
+
         if (this.baseLayer && this.map.hasLayer(this.baseLayer)) {
             this.baseLayer.bringToBack();
         }
-        
-        // Bring image layers to front
-        if (this.manager.imageLayers) {
-            Object.keys(this.manager.imageLayers).forEach(id => {
-                const layer = this.manager.imageLayers[id];
-                if (this.map.hasLayer(layer)) {
-                    layer.bringToFront();
-                }
-            });
+
+        // If the user has reordered layers via the layer control panel,
+        // honour that order. Otherwise fall back to legacy category-based
+        // ordering (image → processed → analysis → tile → AOI).
+        const panel = window.layerControlPanel;
+        if (panel && typeof panel._applyZOrder === 'function') {
+            try {
+                panel._applyZOrder();
+            } catch (e) {
+                console.warn('Layer panel _applyZOrder failed:', e);
+            }
+        } else {
+            const bringAll = (obj) => {
+                if (!obj) return;
+                Object.values(obj).forEach(layer => {
+                    if (this.map.hasLayer(layer) && typeof layer.bringToFront === 'function') {
+                        layer.bringToFront();
+                    }
+                });
+            };
+            bringAll(this.manager.imageLayers);
+            bringAll(this.manager.processedLayers);
+            bringAll(this.manager.analysisLayers);
+            bringAll(this.manager.tileLayers);
         }
-        
-        // Bring processed layers to front
-        if (this.manager.processedLayers) {
-            Object.keys(this.manager.processedLayers).forEach(id => {
-                const layer = this.manager.processedLayers[id];
-                if (this.map.hasLayer(layer)) {
-                    layer.bringToFront();
-                }
-            });
-        }
-        
-        // Bring analysis layers to front
-        if (this.manager.analysisLayers) {
-            Object.keys(this.manager.analysisLayers).forEach(id => {
-                const layer = this.manager.analysisLayers[id];
-                if (this.map.hasLayer(layer)) {
-                    layer.bringToFront();
-                }
-            });
-        }
-        
-        // Bring tile layers to front
-        if (this.manager.tileLayers) {
-            Object.keys(this.manager.tileLayers).forEach(id => {
-                const layer = this.manager.tileLayers[id];
-                if (this.map.hasLayer(layer)) {
-                    layer.bringToFront();
-                }
-            });
-        }
-        
-        // Bring drawn items (AOI polygons) to front last
+
+        // AOI vector overlays always sit on top of raster data.
         if (this.manager.drawnItems && this.map.hasLayer(this.manager.drawnItems)) {
             this.manager.drawnItems.bringToFront();
         }
-        
-        // Also bring individual AOI polygons to front
         if (this.manager.aoiPolygons && this.manager.aoiPolygons.length > 0) {
             this.manager.aoiPolygons.forEach(polygon => {
                 if (this.map.hasLayer(polygon)) {
@@ -442,8 +426,8 @@ class MapCore {
                 }
             });
         }
-        
-        console.log('✅ Data layers brought to front');
+
+        console.log('✅ Layer ordering applied');
     }
 
     showInitializationError(message) {

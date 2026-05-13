@@ -39,6 +39,20 @@ class LocalImageController {
         this.isUploadedImageActive = false;
         this.uploadedBandRoles = {};   // {"NIR": 4, "RED": 3, ...} 1-based
 
+        // Per-slot stash for Load-Image state. Each slot holds the full
+        // bundle of upload-related fields so switching slots swaps out the
+        // overlay, metadata UI, band pool etc. all at once. Band-
+        // registration mode state is intentionally NOT slot-scoped — it's a
+        // separate workflow that operates on a secondary CRS.Simple map.
+        this._localSlotState = { A: null, B: null };
+
+        // Per-channel cache for true per-band Min/Max compositing in load-image
+        // mode. Keys are 'r'/'g'/'b'; each holds the loaded HTMLImageElement plus
+        // the (band, min, max) tuple it was stretched for, so we can avoid
+        // refetching when only an unrelated channel changed.
+        this._slotImages = { r: null, g: null, b: null };
+        this._slotMeta   = { r: null, g: null, b: null };
+
         this.init();
     }
 
@@ -47,6 +61,298 @@ class LocalImageController {
             window.dispatchEvent(new CustomEvent(eventName, { detail }));
         } catch (e) {
             console.warn(`[LocalImage] Event dispatch error (${eventName}):`, e);
+        }
+    }
+
+    // ========== Per-slot state management ==========
+
+    /**
+     * Snapshot all Load-Image-mode fields into `_localSlotState[slotId]` so
+     * they can be restored when the user flips back. Leaflet overlay objects
+     * are kept alive (they're just removed from the map, not destroyed), so
+     * switching back shows the image instantly without re-uploading.
+     */
+    _freezeToSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        // Also capture DOM-only state that doesn't live on the controller:
+        // the RGB slot band assignments and the min/max stretch inputs. The
+        // user's picks here should swap with the slot, not leak across.
+        const rgbSlots = {};
+        ['r', 'g', 'b'].forEach(ch => {
+            const slotBand = document.querySelector(`#local-slot-${ch} .slot-band`);
+            rgbSlots[ch] = slotBand?.dataset?.band || null;
+        });
+        const minEl = document.getElementById('local-min');
+        const maxEl = document.getElementById('local-max');
+
+        this._localSlotState[slotId] = {
+            uploadId: this.uploadId,
+            uploadedImageMeta: this.uploadedImageMeta,
+            geoOverlay: this.geoOverlay,
+            geoBounds: this.geoBounds,
+            geoAnalysisOverlays: { ...(this.geoAnalysisOverlays || {}) },
+            _geoBandOverlays: { ...(this._geoBandOverlays || {}) },
+            _bandImages: { ...(this._bandImages || {}) },
+            isUploadedImageActive: this.isUploadedImageActive,
+            uploadedBandRoles: { ...(this.uploadedBandRoles || {}) },
+            availableBands: Array.isArray(this.availableBands) ? this.availableBands.slice() : [],
+            preloadedBandUrls: { ...(this.preloadedBandUrls || {}) },
+            preloadedSize: { ...(this.preloadedSize || { width: 0, height: 0 }) },
+            percentiles: this.percentiles,
+            _preloadedMin: this._preloadedMin,
+            _preloadedMax: this._preloadedMax,
+            _slotImages: { ...(this._slotImages || { r: null, g: null, b: null }) },
+            _slotMeta:   { ...(this._slotMeta   || { r: null, g: null, b: null }) },
+            lastLocalAnalysisResults: this.lastLocalAnalysisResults,
+            rgbSlots,
+            minValue: minEl?.value ?? null,
+            maxValue: maxEl?.value ?? null,
+        };
+    }
+
+    /**
+     * Load the previously-stashed state for `slotId` into the live fields.
+     * Resets to empty if the slot has never been populated.
+     */
+    _thawFromSlot(slotId) {
+        const s = (slotId === 'A' || slotId === 'B') ? this._localSlotState[slotId] : null;
+        if (s) {
+            this.uploadId = s.uploadId || null;
+            this.uploadedImageMeta = s.uploadedImageMeta || null;
+            this.geoOverlay = s.geoOverlay || null;
+            this.geoBounds = s.geoBounds || null;
+            this.geoAnalysisOverlays = s.geoAnalysisOverlays || {};
+            this._geoBandOverlays = s._geoBandOverlays || {};
+            this._bandImages = s._bandImages || {};
+            this.isUploadedImageActive = !!s.isUploadedImageActive;
+            this.uploadedBandRoles = s.uploadedBandRoles || {};
+            this.availableBands = s.availableBands || [];
+            this.preloadedBandUrls = s.preloadedBandUrls || {};
+            this.preloadedSize = s.preloadedSize || { width: 0, height: 0 };
+            this.percentiles = s.percentiles || null;
+            this._preloadedMin = s._preloadedMin;
+            this._preloadedMax = s._preloadedMax;
+            this._slotImages = s._slotImages || { r: null, g: null, b: null };
+            this._slotMeta   = s._slotMeta   || { r: null, g: null, b: null };
+            this.lastLocalAnalysisResults = s.lastLocalAnalysisResults || null;
+            // Stash DOM-only state so _refreshUploadUI can apply it after
+            // rebuilding the band pool / info panel DOM.
+            this._pendingRgbSlots = s.rgbSlots || null;
+            this._pendingMinValue = s.minValue;
+            this._pendingMaxValue = s.maxValue;
+        } else {
+            // Slot empty — reset to fresh state.
+            this.uploadId = null;
+            this.uploadedImageMeta = null;
+            this.geoOverlay = null;
+            this.geoBounds = null;
+            this.geoAnalysisOverlays = {};
+            this._geoBandOverlays = {};
+            this._bandImages = {};
+            this.isUploadedImageActive = false;
+            this.uploadedBandRoles = {};
+            this.availableBands = [];
+            this.preloadedBandUrls = {};
+            this.preloadedSize = { width: 0, height: 0 };
+            this.percentiles = null;
+            this._preloadedMin = undefined;
+            this._preloadedMax = undefined;
+            this._slotImages = { r: null, g: null, b: null };
+            this._slotMeta   = { r: null, g: null, b: null };
+            this.lastLocalAnalysisResults = null;
+            this._pendingRgbSlots = null;
+            this._pendingMinValue = null;
+            this._pendingMaxValue = null;
+        }
+    }
+
+    /**
+     * Sync the Load-Image-mode DOM to the currently-live fields. Called
+     * after thawing a slot so the file-info panel, band role dropdowns and
+     * band pool reflect the new slot.
+     */
+    _refreshUploadUI() {
+        const infoEl = document.getElementById('uploaded-image-info');
+        const dropZoneEl = document.getElementById('geotiff-drop-zone');
+        const bandCtrls = document.getElementById('local-band-controls');
+        const analyzeBtn = document.getElementById('local-open-analysis-btn');
+
+        const hasUpload = !!this.uploadId && !!this.uploadedImageMeta;
+
+        if (hasUpload) {
+            const meta = this.uploadedImageMeta;
+            const fn = document.getElementById('uploaded-filename');
+            const crs = document.getElementById('uploaded-crs');
+            const bc = document.getElementById('uploaded-band-count');
+            const sz = document.getElementById('uploaded-size');
+            if (fn) fn.textContent = meta.filename || '';
+            if (crs) crs.textContent = meta.crs || '';
+            if (bc) bc.textContent = `${meta.band_count || 0} bands`;
+            if (sz) sz.textContent = `${meta.width || 0} x ${meta.height || 0} px`;
+            if (infoEl) infoEl.style.display = '';
+            if (dropZoneEl) dropZoneEl.style.display = 'none';
+
+            // Rebuild band-role dropdowns from the stored band names, then
+            // restore the stored role→band mapping.
+            if (Array.isArray(meta.band_names) && meta.band_names.length > 0) {
+                this._populateBandRoleMapping(meta.band_names);
+                document.querySelectorAll('#band-role-grid select').forEach(sel => {
+                    const role = sel.dataset.role;
+                    if (this.uploadedBandRoles && this.uploadedBandRoles[role]) {
+                        sel.value = String(this.uploadedBandRoles[role]);
+                    }
+                });
+            }
+
+            // Rebuild the draggable band pool from availableBands.
+            const pool = document.getElementById('local-band-pool');
+            if (pool && Array.isArray(this.availableBands)) {
+                pool.innerHTML = '';
+                this.availableBands.forEach(band => {
+                    const chip = document.createElement('div');
+                    chip.className = 'band-chip';
+                    chip.draggable = true;
+                    chip.dataset.band = band;
+                    chip.textContent = band.replace(/^Band\s*/i, '');
+                    chip.addEventListener('dragstart', (e) => {
+                        e.dataTransfer.setData('text/plain', band);
+                        chip.classList.add('dragging');
+                    });
+                    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+                    pool.appendChild(chip);
+                });
+            }
+
+            // Restore RGB slot assignments from the thawed stash (user drops
+            // bands onto R/G/B slots — those picks should be per-slot).
+            if (this._pendingRgbSlots) {
+                ['r', 'g', 'b'].forEach(ch => {
+                    const slotBand = document.querySelector(`#local-slot-${ch} .slot-band`);
+                    if (!slotBand) return;
+                    const band = this._pendingRgbSlots[ch];
+                    if (band) {
+                        slotBand.textContent = String(band).replace(/^Band\s*/i, '');
+                        slotBand.dataset.band = band;
+                    } else {
+                        slotBand.textContent = '';
+                        delete slotBand.dataset.band;
+                    }
+                });
+                this._pendingRgbSlots = null;
+            }
+            // Restore min/max stretch inputs.
+            if (this._pendingMinValue != null) {
+                const minEl = document.getElementById('local-min');
+                if (minEl) minEl.value = String(this._pendingMinValue);
+                this._pendingMinValue = null;
+            }
+            if (this._pendingMaxValue != null) {
+                const maxEl = document.getElementById('local-max');
+                if (maxEl) maxEl.value = String(this._pendingMaxValue);
+                this._pendingMaxValue = null;
+            }
+
+            if (bandCtrls) bandCtrls.style.display = '';
+            if (analyzeBtn) analyzeBtn.disabled = false;
+        } else {
+            if (infoEl) infoEl.style.display = 'none';
+            if (dropZoneEl) dropZoneEl.style.display = '';
+            if (bandCtrls) bandCtrls.style.display = 'none';
+            if (analyzeBtn) analyzeBtn.disabled = true;
+
+            const grid = document.getElementById('band-role-grid');
+            if (grid) grid.innerHTML = '';
+            const pool = document.getElementById('local-band-pool');
+            if (pool) pool.innerHTML = '';
+
+            // Clear RGB slot bands — leave visual slots but remove any band
+            // dataset so nothing accidentally "carries over" into an empty slot.
+            ['r', 'g', 'b'].forEach(ch => {
+                const slotBand = document.querySelector(`#local-slot-${ch} .slot-band`);
+                if (!slotBand) return;
+                slotBand.textContent = '';
+                delete slotBand.dataset.band;
+            });
+        }
+    }
+
+    /**
+     * Re-attach all stashed Leaflet overlays for the active slot to the main
+     * map. Called after `_thawFromSlot` when we're in 'load-image' mode.
+     */
+    _restoreGeoOverlaysToMap() {
+        const map = window.mapManager?.map;
+        if (!map) return;
+        if (this.geoOverlay && !map.hasLayer(this.geoOverlay)) {
+            this.geoOverlay.addTo(map);
+        }
+        if (this._geoBandOverlays) {
+            Object.values(this._geoBandOverlays).forEach(ov => {
+                if (ov && !map.hasLayer(ov)) {
+                    ov.addTo(map);
+                    // Preserve the original display:none convention used by
+                    // _loadGeoImages (only the active RGB composite is shown).
+                    const el = ov.getElement && ov.getElement();
+                    if (el) el.style.display = 'none';
+                }
+            });
+        }
+        // geoAnalysisOverlays are already managed by MapLayers' slot stash,
+        // so we don't re-add them here to avoid double-adding.
+    }
+
+    /**
+     * Return the filename of the uploaded GeoTIFF for `slotId`, or null if
+     * that slot has no upload. Used by PlatformController._updateSlotToolbar
+     * to show a "local: <name>" hint in the slot button subtitle.
+     */
+    getSlotUploadFilename(slotId) {
+        const activeSlot = this.platform?.currentSlot || 'A';
+        if (slotId === activeSlot) {
+            return this.uploadedImageMeta?.filename || null;
+        }
+        return this._localSlotState?.[slotId]?.uploadedImageMeta?.filename || null;
+    }
+
+    /**
+     * Called by PlatformController.switchSlot. Swap out the live state for
+     * `oldSlot` and swap in the state for `newSlot`, including map overlays
+     * (when currently in Load-Image mode) and DOM.
+     */
+    handleSlotChange(oldSlot, newSlot) {
+        if (oldSlot === newSlot) return;
+
+        // 1. Stash outgoing slot.
+        this._freezeToSlot(oldSlot);
+
+        // 2. Strip current overlays off the map. Band overlays belong to the
+        //    outgoing slot; pulling them here prevents two slots worth of
+        //    imagery showing at once while we thaw the incoming slot.
+        this._removeGeoOverlays();
+
+        // 3. Load incoming slot's fields.
+        this._thawFromSlot(newSlot);
+
+        // 4. Refresh DOM (drop zone / info panel / band controls / analyze
+        //    button) regardless of current mode — the changes are harmless
+        //    even when the Load-Image panel isn't visible right now.
+        this._refreshUploadUI();
+
+        // 5. Put overlays back on the map only if the user is actually
+        //    looking at the main map in Load-Image mode. In band-reg mode
+        //    we leave them detached until the mode toggle runs them back on.
+        if (this.currentMode === 'load-image') {
+            this._restoreGeoOverlaysToMap();
+        }
+
+        // 6. If this slot had a local Analyze session (the user clicked the
+        //    local "Analyze" button before switching away), rebuild the
+        //    right-panel `.analysis-list` with local options. Without this,
+        //    `PlatformController.switchSlot` has already called
+        //    `imageProcessorController.showAnalysisResults(null)` which paints
+        //    the satellite empty-state and hides the local entry points.
+        if (this.isUploadedImageActive && this.lastLocalAnalysisResults != null) {
+            this._renderLocalAnalysisListDOM();
         }
     }
 
@@ -226,6 +532,12 @@ class LocalImageController {
 
             // Load bands via GPU
             await this.loadUploadedBands();
+
+            // Refresh the slot toolbar so the Time A / Time B buttons show
+            // the uploaded filename for the active slot.
+            if (typeof this.platform._updateSlotToolbar === 'function') {
+                this.platform._updateSlotToolbar();
+            }
 
             this.platform.showNotification('GeoTIFF uploaded successfully', 'success');
         } catch (e) {
@@ -420,12 +732,18 @@ class LocalImageController {
         this.availableBands = [];
         this.percentiles = null;
         this.uploadedBandRoles = {};
+        this._slotImages = { r: null, g: null, b: null };
+        this._slotMeta   = { r: null, g: null, b: null };
 
         document.getElementById('uploaded-image-info').style.display = 'none';
         document.getElementById('geotiff-drop-zone').style.display = '';
         document.getElementById('local-band-controls').style.display = 'none';
         const analyzeBtn = document.getElementById('local-open-analysis-btn');
         if (analyzeBtn) analyzeBtn.disabled = true;
+
+        if (typeof this.platform._updateSlotToolbar === 'function') {
+            this.platform._updateSlotToolbar();
+        }
 
         this.platform.showNotification('Image removed', 'info');
     }
@@ -533,6 +851,13 @@ class LocalImageController {
             if (!this.localMap.hasLayer(this.currentOverlay)) {
                 this.currentOverlay.addTo(this.localMap);
             }
+        }
+
+        // Apply any active symbology rendering filter (gamma/contrast/brightness/saturation)
+        // to the freshly created panes. The controller may have been adjusted before the
+        // user actually loaded a raster.
+        if (window.symbology && window.symbology.local) {
+            window.symbology.local._applyRenderingToLocalMap();
         }
     }
 
@@ -913,6 +1238,131 @@ class LocalImageController {
         this._bandOverlays = {};
     }
 
+    /**
+     * Read per-channel (min, max) from the symbology controller. Falls back to the
+     * legacy hidden inputs (single value applied to all channels) when the symbology
+     * UI is not in 'minmax' mode or its state is not yet initialized.
+     */
+    _readSymbologyRanges() {
+        const sc = window.symbology && window.symbology.local;
+        if (sc && sc.state && sc.state.bands && sc.state.mode === 'minmax') {
+            return {
+                r: { min: Number(sc.state.bands.r.min), max: Number(sc.state.bands.r.max) },
+                g: { min: Number(sc.state.bands.g.min), max: Number(sc.state.bands.g.max) },
+                b: { min: Number(sc.state.bands.b.min), max: Number(sc.state.bands.b.max) },
+            };
+        }
+        const fallbackMin = parseFloat(document.getElementById('local-min')?.value) || 0;
+        const fallbackMax = parseFloat(document.getElementById('local-max')?.value) || 3000;
+        return {
+            r: { min: fallbackMin, max: fallbackMax },
+            g: { min: fallbackMin, max: fallbackMax },
+            b: { min: fallbackMin, max: fallbackMax },
+        };
+    }
+
+    /**
+     * Per-band stretch + composite for upload mode. Refetches only the channels whose
+     * (band, min, max) tuple changed since the last call, then RGB-composites the
+     * three slot images on a canvas.
+     */
+    async _composePerBandUpload(rBand, gBand, bBand, ranges, hooks) {
+        if (!this.uploadId) return null;
+        const showLoad = hooks?.showLoad || (() => {});
+        const hideLoad = hooks?.hideLoad || (() => {});
+
+        const wanted = {
+            r: { band: rBand, min: ranges.r.min, max: ranges.r.max },
+            g: { band: gBand, min: ranges.g.min, max: ranges.g.max },
+            b: { band: bBand, min: ranges.b.min, max: ranges.b.max },
+        };
+
+        // Determine which slots need re-stretching.
+        const stale = [];
+        for (const slot of ['r', 'g', 'b']) {
+            const cur = this._slotMeta[slot];
+            const w = wanted[slot];
+            if (!cur || cur.band !== w.band || cur.min !== w.min || cur.max !== w.max) {
+                stale.push(slot);
+            }
+        }
+
+        if (stale.length > 0) {
+            showLoad(`Stretching ${stale.length === 3 ? 'channels' : stale.join('/').toUpperCase()}…`);
+            try {
+                const specs = stale.map(slot => ({
+                    slot,
+                    band_name: wanted[slot].band,
+                    min_val: wanted[slot].min,
+                    max_val: wanted[slot].max,
+                }));
+                const res = await fetch('/api/local/uploaded/gpu-stretch-multi', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ upload_id: this.uploadId, specs }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                this.preloadedSize = { width: data.width, height: data.height };
+
+                await Promise.all(stale.map(slot => new Promise(resolve => {
+                    const url = data.slot_urls?.[slot];
+                    if (!url) return resolve();
+                    const img = new window.Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        this._slotImages[slot] = img;
+                        this._slotMeta[slot] = { ...wanted[slot] };
+                        resolve();
+                    };
+                    img.onerror = () => resolve();
+                    img.src = url;
+                })));
+            } catch (err) {
+                console.error('gpu-stretch-multi failed:', err);
+                hideLoad();
+                return null;
+            }
+            hideLoad();
+        }
+
+        const rImg = this._slotImages.r;
+        const gImg = this._slotImages.g;
+        const bImg = this._slotImages.b;
+        if (!rImg || !gImg || !bImg) return null;
+
+        const w = rImg.naturalWidth;
+        const h = rImg.naturalHeight;
+        if (!w || !h) return null;
+
+        const offscreen = document.createElement('canvas');
+        offscreen.width = w;
+        offscreen.height = h;
+        const ctx = offscreen.getContext('2d');
+
+        ctx.drawImage(rImg, 0, 0);
+        const rData = ctx.getImageData(0, 0, w, h).data;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(gImg, 0, 0);
+        const gData = ctx.getImageData(0, 0, w, h).data;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(bImg, 0, 0);
+        const bData = ctx.getImageData(0, 0, w, h).data;
+
+        const result = ctx.createImageData(w, h);
+        const out = result.data;
+        for (let i = 0; i < rData.length; i += 4) {
+            out[i]     = rData[i];
+            out[i + 1] = gData[i];
+            out[i + 2] = bData[i];
+            out[i + 3] = 255;
+        }
+        ctx.putImageData(result, 0, 0);
+        const dataUrl = offscreen.toDataURL('image/png');
+        this.displayOverlay(dataUrl, w, h);
+        return dataUrl;
+    }
+
     _composeRGBFromBands(rBand, gBand, bBand) {
         const rImg = this._bandImages?.[rBand];
         const gImg = this._bandImages?.[gBand];
@@ -979,19 +1429,28 @@ class LocalImageController {
     setupApplyButton() {
         const btn = document.getElementById('apply-local-vis');
         if (btn) {
-            btn.addEventListener('click', () => this.applyRGBVisualization());
+            btn.addEventListener('click', () => this.applyRGBVisualization({ silent: true }));
         }
+        // Visualization changes (Min/Max, mode, percentile) intentionally do NOT auto-apply.
+        // The user must click Apply, matching the cloud (S2/S1) behavior. Rendering changes
+        // (gamma/contrast/brightness/saturation) remain instant via the symbology controller's
+        // CSS-filter pipeline — see `_applyRenderingToLocalOverlays` in symbology-controller.js.
     }
 
-    async applyRGBVisualization() {
+    async applyRGBVisualization(opts) {
+        const silent = !!(opts && opts.silent);
+        const notify = (msg, level, ms) => { if (!silent) this.platform.showNotification(msg, level, ms); };
+        const showLoad = (msg) => { if (!silent) this.platform.showLoading(msg); };
+        const hideLoad = () => { if (!silent) this.platform.hideLoading(); };
+
         if (this.currentMode === 'load-image') {
             if (!this.uploadId) {
-                this.platform.showNotification('Upload a GeoTIFF first', 'warning');
+                notify('Upload a GeoTIFF first', 'warning');
                 return;
             }
         } else {
             if (!this.currentImageDir || !this.currentAlgoDir) {
-                this.platform.showNotification('Select image and algorithm first', 'warning');
+                notify('Select image and algorithm first', 'warning');
                 return;
             }
         }
@@ -1001,31 +1460,37 @@ class LocalImageController {
         const bBand = document.querySelector('#local-slot-b .slot-band')?.dataset.band;
 
         if (!rBand || !gBand || !bBand) {
-            this.platform.showNotification('Assign bands to R, G, B slots', 'warning');
+            notify('Assign bands to R, G, B slots', 'warning');
             return;
         }
 
-        // Check if percentile stretch values changed since last preload
+        // Load-image mode supports true per-band Min/Max via gpu-stretch-multi.
+        // Each channel can have its own (band, min, max) tuple — falls back to the
+        // single-range path below for band-registration mode.
+        if (this.currentMode === 'load-image') {
+            const ranges = this._readSymbologyRanges();
+            const dataUrl = await this._composePerBandUpload(rBand, gBand, bBand, ranges, { showLoad, hideLoad });
+            if (dataUrl) {
+                notify(`RGB: ${rBand} / ${gBand} / ${bBand}`, 'success', 2000);
+            }
+            return;
+        }
+
+        // Band-registration: existing single-stretch flow.
         const curMin = parseFloat(document.getElementById('local-min')?.value) || 0;
         const curMax = parseFloat(document.getElementById('local-max')?.value) || 3000;
         if (this._preloadedMin !== curMin || this._preloadedMax !== curMax) {
-            this.platform.showLoading('Applying new stretch (GPU)...');
-            if (this.currentMode === 'load-image') {
-                await this.gpuStretchUploaded();
-            } else {
-                await this.gpuStretchBands();
-            }
-            this.platform.hideLoading();
+            showLoad('Applying new stretch (GPU)...');
+            await this.gpuStretchBands();
+            hideLoad();
         }
 
         // Try instant client-side compositing
         const dataUrl = this._composeRGBFromBands(rBand, gBand, bBand);
         if (dataUrl && this.preloadedSize.width) {
             this.displayOverlay(dataUrl, this.preloadedSize.width, this.preloadedSize.height);
-            const label = this.currentMode === 'load-image'
-                ? `RGB: ${rBand} / ${gBand} / ${bBand}`
-                : `RGB: ${rBand.replace('after_','').replace('.tif','')} / ${gBand.replace('after_','').replace('.tif','')} / ${bBand.replace('after_','').replace('.tif','')}`;
-            this.platform.showNotification(label, 'success', 2000);
+            const label = `RGB: ${rBand.replace('after_','').replace('.tif','')} / ${gBand.replace('after_','').replace('.tif','')} / ${bBand.replace('after_','').replace('.tif','')}`;
+            notify(label, 'success', 2000);
             return;
         }
 
@@ -1033,7 +1498,7 @@ class LocalImageController {
         if (this.currentMode === 'band-registration') {
             const min = parseFloat(document.getElementById('local-min')?.value) || 0;
             const max = parseFloat(document.getElementById('local-max')?.value) || 3000;
-            this.platform.showLoading('Creating visualization...');
+            showLoad('Creating visualization...');
             try {
                 const res = await fetch('/api/local/visualize-rgb', {
                     method: 'POST',
@@ -1051,9 +1516,9 @@ class LocalImageController {
                 this.displayOverlay(data.image_url, data.width, data.height);
             } catch (e) {
                 console.error('RGB visualization error:', e);
-                this.platform.showNotification('Visualization failed', 'error');
+                notify('Visualization failed', 'error');
             } finally {
-                this.platform.hideLoading();
+                hideLoad();
             }
         }
     }
@@ -1310,16 +1775,26 @@ class LocalImageController {
     }
 
     showLocalAnalysisResults(analysisResults) {
+        this.lastLocalAnalysisResults = analysisResults;
+        // User-triggered flow: clear any existing overlays, then rebuild.
+        this.clearAllAnalysisOverlays();
+        this._renderLocalAnalysisListDOM();
+    }
+
+    /**
+     * Rebuild the `.analysis-list` DOM from `this.lastLocalAnalysisResults`
+     * WITHOUT clearing existing overlays. Used by `handleSlotChange` so a
+     * slot swap doesn't nuke the overlays we just restored from stash.
+     */
+    _renderLocalAnalysisListDOM() {
         const analysisList = document.querySelector('.analysis-list');
         if (!analysisList) return;
 
         analysisList.innerHTML = '';
-        this.clearAllAnalysisOverlays();
-
         this.addLocalSpectralAnalysisOption(analysisList);
         this.addLocalTargetDetectionOption(analysisList);
         if (this.isUploadedImageActive) {
-            this.addLocalSAM2Option(analysisList);
+            this.addLocalSAM3Option(analysisList);
         }
     }
 
@@ -1398,12 +1873,12 @@ class LocalImageController {
         analysisList.appendChild(tdItem);
     }
 
-    addLocalSAM2Option(analysisList) {
-        const sam2Item = document.createElement('div');
-        sam2Item.className = 'analysis-item sam2-option';
-        sam2Item.dataset.modelId = 'sam2';
-        sam2Item.dataset.active = 'false';
-        sam2Item.innerHTML = `
+    addLocalSAM3Option(analysisList) {
+        const sam3Item = document.createElement('div');
+        sam3Item.className = 'analysis-item sam3-option';
+        sam3Item.dataset.modelId = 'sam3';
+        sam3Item.dataset.active = 'false';
+        sam3Item.innerHTML = `
             <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #7b1fa2 0%, #e91e63 100%);">
                 <div class="custom-icon">
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
@@ -1415,31 +1890,31 @@ class LocalImageController {
                 </div>
             </div>
             <div class="analysis-info">
-                <h4 class="analysis-title">SAM2 Segmentation</h4>
+                <h4 class="analysis-title">SAM3 Segmentation</h4>
                 <div class="analysis-status inactive">Click to start</div>
             </div>
         `;
-        sam2Item.onclick = (e) => {
-            if (e.target.closest('.sam2-ui')) return;
-            if (!this.platform.sam2Controller) {
-                this.platform.showNotification('SAM2 module not loaded', 'error');
+        sam3Item.onclick = (e) => {
+            if (e.target.closest('.sam3-ui')) return;
+            if (!this.platform.sam3Controller) {
+                this.platform.showNotification('SAM3 module not loaded', 'error');
                 return;
             }
-            this.platform.sam2Controller.handleItemClick();
+            this.platform.sam3Controller.handleItemClick();
         };
-        analysisList.appendChild(sam2Item);
+        analysisList.appendChild(sam3Item);
     }
 
     // ===== Analysis Overlay Management (mode-aware) =====
 
-    showLocalAnalysisLayer(modelId, imageUrl, imgW, imgH, displayName) {
+    showLocalAnalysisLayer(modelId, imageUrl, imgW, imgH, displayName, isBinary = false) {
         this.hideLocalAnalysisLayer(modelId);
 
         if (this.currentMode === 'load-image') {
             // load-image mode: delegate to mapManager for unified behavior
             // (same opacity, interactive, event dispatch as satellite search)
             if (!window.mapManager || !this.geoBounds) return;
-            window.mapManager.showAnalysisLayer(modelId, imageUrl, displayName || modelId, this.geoBounds);
+            window.mapManager.showAnalysisLayer(modelId, imageUrl, displayName || modelId, this.geoBounds, isBinary);
             // Keep a reference so we can clean up later
             this.geoAnalysisOverlays[modelId] = window.mapManager.analysisLayers?.[modelId] || null;
         } else {
@@ -1596,13 +2071,24 @@ class LocalImageController {
 
             if (data.overlay_url) {
                 this.hideLocalAnalysisLayer(modelId);
-                this.showLocalAnalysisLayer(modelId, data.overlay_url, imgW, imgH);
+                this.showLocalAnalysisLayer(modelId, data.overlay_url, imgW, imgH, undefined, true);
                 analysisItem.dataset.currentOverlayUrl = data.overlay_url;
                 analysisItem.dataset.isBinary = 'true';
                 analysisItem.dataset.active = 'true';
                 analysisItem.classList.add('active');
                 const statusEl = analysisItem.querySelector('.analysis-status');
                 if (statusEl) { statusEl.textContent = 'Binary mask active'; statusEl.classList.remove('inactive'); statusEl.classList.add('active'); }
+            }
+
+            // Register the spectral mask so change-detection can use it.
+            if (data.analysis_id && typeof this.platform.registerSlotAnalysis === 'function') {
+                const label = result?.colormap?.label || result?.name || modelId;
+                this.platform.registerSlotAnalysis({
+                    id: data.analysis_id,
+                    type: 'spectral',
+                    name: `${label} (${minThreshold.toFixed(3)}–${maxThreshold.toFixed(3)})`,
+                    hasMask: true,
+                });
             }
 
             this.platform.hideLoading();

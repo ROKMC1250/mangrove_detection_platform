@@ -137,7 +137,7 @@ def resize_rgb_to_dims(rgb: np.ndarray, target_width: int, target_height: int) -
     if src_w == target_width and src_h == target_height:
         return rgb
     pil = Image.fromarray(rgb, mode='RGB')
-    resized = pil.resize((int(target_width), int(target_height)), Image.BILINEAR)
+    resized = pil.resize((int(target_width), int(target_height)), Image.NEAREST)
     return np.asarray(resized, dtype=np.uint8)
 
 
@@ -212,24 +212,24 @@ def warp_rgb_and_mask_to_aoi(rgb: np.ndarray, valid_mask: Optional[np.ndarray],
     dst_g = np.zeros((dst_h, dst_w), dtype=np.uint8)
     dst_b = np.zeros((dst_h, dst_w), dtype=np.uint8)
     
-    # Reproject channels
+    # Reproject channels with nearest-neighbor to preserve crisp pixel boundaries
     reproject(
         source=rgb[..., 0], destination=dst_r,
         src_transform=src_transform, src_crs=src_crs,
         dst_transform=dst_transform, dst_crs=dst_crs,
-        resampling=Resampling.bilinear
+        resampling=Resampling.nearest
     )
     reproject(
         source=rgb[..., 1], destination=dst_g,
         src_transform=src_transform, src_crs=src_crs,
         dst_transform=dst_transform, dst_crs=dst_crs,
-        resampling=Resampling.bilinear
+        resampling=Resampling.nearest
     )
     reproject(
         source=rgb[..., 2], destination=dst_b,
         src_transform=src_transform, src_crs=src_crs,
         dst_transform=dst_transform, dst_crs=dst_crs,
-        resampling=Resampling.bilinear
+        resampling=Resampling.nearest
     )
     
     dst_rgb = np.stack([dst_r, dst_g, dst_b], axis=-1)

@@ -80,6 +80,18 @@ class ImageProcessorController {
 
                 this.platform.currentProcessedImageId = imageId;
 
+                // A fresh process on the active slot invalidates any
+                // previously-registered analysis result ids for this slot —
+                // those ids point at cached rasters for the prior image and
+                // would fail the shape check inside change-detection. Clear
+                // the registry; leave Leaflet layers alone (they'll be
+                // replaced by modelId as the user re-runs each analysis).
+                const slotState = this.platform._slots?.[this.platform.currentSlot];
+                if (slotState) slotState.analyses = [];
+                if (typeof this.platform._updateSlotToolbar === 'function') {
+                    this.platform._updateSlotToolbar();
+                }
+
                 // Display analysis results in Analysis tab
                 if (data.analysis_results) {
                     this.showAnalysisResults(data.analysis_results);
@@ -119,78 +131,6 @@ class ImageProcessorController {
         }
     }
 
-    async processEmitImage(imageId, bandSelection) {
-        if (!imageId || !bandSelection) {
-            this.platform.showNotification('Please select an image and bands first', 'error');
-            return;
-        }
-
-        this.platform.showLoading('Processing EMIT image with selected bands...');
-
-        try {
-            const jobId = `emit-${imageId}-${Date.now()}`;
-            this.platform._progressStop = false;
-
-            this.platform.pollProgress(jobId).catch((e) => {
-                console.error('[EMIT PROCESS] Polling failed:', e);
-            });
-
-            const response = await fetch('/api/process-emit-image', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    item_id: imageId,
-                    bbox: window.mapManager.getCurrentBounds(),
-                    geometry: window.mapManager.getCurrentGeoJSON()?.geometry,
-                    selected_bands: bandSelection.selected_bands,
-                    visualization_type: bandSelection.visualization_type,
-                    rgb_bands: bandSelection.rgb_bands,
-                    index_bands: bandSelection.index_bands,
-                    colormap: bandSelection.colormap,
-                    job_id: jobId
-                })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                
-                if (data.visualization) {
-                    const viz = data.visualization;
-                    
-                    if (viz.preview) {
-                        const customResult = {
-                            model_id: `emit-${bandSelection.visualization_type}`,
-                            name: `EMIT ${bandSelection.visualization_type === 'rgb' ? 'RGB Composite' : 'Custom Index'}`,
-                            preview: viz.preview,
-                            overlay_url: viz.overlay_url,
-                            overlay_meta: viz.overlay_meta,
-                            range: viz.range
-                        };
-                        
-                        if (this.platform.analysisController) {
-                            this.platform.analysisController.addCustomVisualizationResult(customResult);
-                        }
-                    }
-                }
-
-                this.platform.showNotification('EMIT image processing complete!', 'success');
-                this.platform._progressStop = true;
-                this.platform.hideLoading();
-            } else {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'EMIT processing failed');
-            }
-
-        } catch (error) {
-            console.error('Error processing EMIT image:', error);
-            this.platform.showNotification(`Error processing EMIT image: ${error.message}`, 'error');
-            this.platform._progressStop = true;
-            this.platform.hideLoading();
-        }
-    }
-
     showAnalysisResults(analysisResults) {
         this.lastAnalysisResults = analysisResults;
         this.platform.lastAnalysisResults = analysisResults;
@@ -206,6 +146,23 @@ class ImageProcessorController {
         if (!analysisList) return;
 
         analysisList.innerHTML = '';
+
+        // Slot-switch may call us with null/empty results when the target
+        // slot hasn't been processed yet. Show an empty state instead of
+        // crashing on `analysisResults[modelId]`.
+        if (!analysisResults || typeof analysisResults !== 'object'
+            || Object.keys(analysisResults).length === 0) {
+            const slot = this.platform.currentSlot || 'A';
+            analysisList.innerHTML = `
+                <div class="no-analysis-results">
+                    <div class="empty-state-icon">📊</div>
+                    <h4 class="empty-state-title">Time ${slot}: No analysis yet</h4>
+                    <p class="empty-state-message">
+                        Select an image and click <b>Analyze</b> to populate Time ${slot}.
+                    </p>
+                </div>`;
+            return;
+        }
 
         // Structured layout: Cloud Mask, AlphaEarth, Spectral Analysis, Target Detection
         const renderOrder = ['cloud_mask', 'model5'];
@@ -225,8 +182,8 @@ class ImageProcessorController {
         // Mangrove Segmentation section
         this.addMangroveSegmentationOption(analysisList);
 
-        // SAM2 Segmentation section
-        this.addSAM2Option(analysisList);
+        // SAM3 Segmentation section
+        this.addSAM3Option(analysisList);
 
         console.log('Analysis results displayed in list format');
     }
@@ -390,15 +347,15 @@ class ImageProcessorController {
         analysisList.appendChild(msItem);
     }
 
-    addSAM2Option(analysisList) {
-        const sam2Item = document.createElement('div');
-        sam2Item.className = 'analysis-item sam2-option';
-        sam2Item.dataset.modelId = 'sam2';
-        sam2Item.dataset.active = 'false';
+    addSAM3Option(analysisList) {
+        const sam3Item = document.createElement('div');
+        sam3Item.className = 'analysis-item sam3-option';
+        sam3Item.dataset.modelId = 'sam3';
+        sam3Item.dataset.active = 'false';
 
-        sam2Item.innerHTML = `
+        sam3Item.innerHTML = `
             <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #7b1fa2 0%, #e91e63 100%);">
-                <div class="custom-icon sam2-icon-svg">
+                <div class="custom-icon sam3-icon-svg">
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
                         <path d="M6 9l6 6 6-6"/>
                         <rect x="3" y="3" width="18" height="18" rx="3"/>
@@ -408,21 +365,21 @@ class ImageProcessorController {
                 </div>
             </div>
             <div class="analysis-info">
-                <h4 class="analysis-title">SAM2 Segmentation</h4>
+                <h4 class="analysis-title">SAM3 Segmentation</h4>
                 <div class="analysis-status inactive">Click to start</div>
             </div>
         `;
 
-        sam2Item.onclick = (e) => {
-            if (e.target.closest('.sam2-ui')) return;
-            if (!this.platform.sam2Controller) {
-                this.platform.showNotification('SAM2 module not loaded', 'error');
+        sam3Item.onclick = (e) => {
+            if (e.target.closest('.sam3-ui')) return;
+            if (!this.platform.sam3Controller) {
+                this.platform.showNotification('SAM3 module not loaded', 'error');
                 return;
             }
-            this.platform.sam2Controller.handleItemClick();
+            this.platform.sam3Controller.handleItemClick();
         };
 
-        analysisList.appendChild(sam2Item);
+        analysisList.appendChild(sam3Item);
     }
 
     addCustomVisualizationOption(analysisList) {
@@ -721,7 +678,9 @@ class ImageProcessorController {
                 await window.mapManager.showAnalysisLayer(
                     modelId,
                     data.overlay_url,
-                    `${result.name} (Binary)`
+                    `${result.name} (Binary)`,
+                    null,
+                    true
                 );
 
                 // Update analysis item state

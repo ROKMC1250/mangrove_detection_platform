@@ -89,7 +89,6 @@ class UIManager {
             'Processing...': { title: 'Extracting analysis results...' },
             'Processing image...': { title: 'Extracting analysis results...' },
             'Processing image on server (export + analysis)...': { title: 'Extracting analysis results...' },
-            'Processing EMIT image with selected bands...': { title: 'Analyzing EMIT...' },
             'Downloading...': { title: 'Downloading...' },
             'Downloading image...': { title: 'Downloading...' },
             'Running detection...': { title: 'Running detection...' },
@@ -173,14 +172,6 @@ class UIManager {
                 // Dispatch tab switch event for layer control panel
                 window.dispatchEvent(new CustomEvent('tab:switched', { detail: { tab: targetTab }}));
 
-                // Update button states when switching to Change Monitoring tab
-                if (targetTab === 'change-monitoring') {
-                    const hasAOI = window.mapManager && window.mapManager.getCurrentBounds();
-                    const searchBtn = document.getElementById('search-change-images-btn');
-                    if (searchBtn) {
-                        searchBtn.disabled = !hasAOI;
-                    }
-                }
             });
         });
     }
@@ -238,15 +229,6 @@ class UIManager {
         if (analysisTab) analysisTab.classList.add('active');
         const analysisContent = document.getElementById('right-analysis-tab-content');
         if (analysisContent) analysisContent.classList.add('active');
-    }
-
-    switchToChangeMonitoringTab() {
-        // Change monitoring disabled
-        // const changeMonitoringTab = document.getElementById('change-monitoring-tab');
-        // if (changeMonitoringTab) {
-        //     changeMonitoringTab.classList.remove('hidden');
-        //     changeMonitoringTab.click();
-        // }
     }
 
     showNoAnalysisResults() {

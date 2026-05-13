@@ -423,7 +423,9 @@ class ThresholdController {
                 await window.mapManager.showAnalysisLayer(
                     modelId,
                     data.overlay_url,
-                    `${result.name} (Binary)`
+                    `${result.name} (Binary)`,
+                    null,
+                    true
                 );
 
                 // Update analysis item state to use binary map
@@ -440,6 +442,19 @@ class ThresholdController {
                         statusEl.classList.add('active');
                     }
                 }
+            }
+
+            // Register the spectral mask in the slot registry so change
+            // detection can pick it up. The backend returns analysis_id
+            // (= INDEX_DATA_CACHE key) which doubles as the lookup id.
+            if (data.analysis_id && typeof this.platform.registerSlotAnalysis === 'function') {
+                const label = result.colormap?.label || result.name || 'Spectral';
+                this.platform.registerSlotAnalysis({
+                    id: data.analysis_id,
+                    type: 'spectral',
+                    name: `${label} (${minThreshold.toFixed(3)}–${maxThreshold.toFixed(3)})`,
+                    hasMask: true,
+                });
             }
 
             this.platform.hideLoading();

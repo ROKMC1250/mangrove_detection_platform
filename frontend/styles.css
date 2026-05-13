@@ -7,6 +7,14 @@
     box-sizing: border-box;
 }
 
+/* Render Sentinel-2 / analysis raster pixels as crisp blocks when zoomed past native resolution */
+.leaflet-dataPane img,
+.leaflet-analysisPane img {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: #f8f9fa;
@@ -83,8 +91,8 @@ body {
     top: 80px;
     left: 16px;
     width: clamp(280px, 22vw, 420px);
-    height: min(calc(100vh - 120px), 85vh);
-    max-height: calc(100vh - 120px);
+    height: min(calc(100vh - 160px), 80vh);
+    max-height: calc(100vh - 160px);
     display: flex;
     flex-direction: column;
     background: white;
@@ -451,7 +459,7 @@ body {
     top: 80px;
     right: 16px;
     width: clamp(280px, 22vw, 420px);
-    max-height: calc(100vh - 100px);
+    max-height: calc(100vh - 160px);
     background: white;
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
@@ -515,6 +523,209 @@ body {
     flex: 1;
     overflow-y: auto;
 }
+
+/* ===== Slot toolbar (Change Detection: Time A / Time B) ===== */
+.slot-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f1f3f4;
+    border-bottom: 1px solid #e0e0e0;
+    flex-shrink: 0;
+}
+/* Left panel variant: no CD button, so the slot group stretches full width. */
+.left-slot-toolbar .slot-toggle-group {
+    flex: 1;
+}
+.slot-toggle-group {
+    display: flex;
+    border: 1px solid #c7cace;
+    border-radius: 6px;
+    overflow: hidden;
+    flex: 1;
+    min-width: 0;
+}
+.slot-btn {
+    padding: 6px 10px;
+    border: none;
+    background: #fff;
+    color: #5f6368;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    line-height: 1.2;
+}
+.slot-btn + .slot-btn { border-left: 1px solid #c7cace; }
+.slot-btn:hover { background: #e8eaed; }
+.slot-btn.active {
+    background: #1a73e8;
+    color: #fff;
+    box-shadow: inset 0 -3px 0 #0d47a1;
+}
+.slot-btn-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+.slot-btn-sub {
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.85;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.slot-btn.active .slot-btn-sub { opacity: 1; }
+.slot-btn-sub.empty { font-style: italic; opacity: 0.6; }
+/* Right-panel CD tab button — matches other right-tab-btns; when disabled
+   looks greyed out. (Uses existing .right-tab-btn rules + :disabled override.) */
+.right-tab-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ===== Change Detection tab ===== */
+.cd-tab {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.cd-tab-header h4 {
+    margin: 0 0 2px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #202124;
+}
+.cd-tab-hint {
+    margin: 0;
+    font-size: 11px;
+    color: #5f6368;
+    line-height: 1.3;
+}
+.cd-analysis-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* Expanded change-detection method: setup panel + results stacked below. */
+.analysis-item.change-detection-option.expanded {
+    flex-direction: column;
+    align-items: stretch;
+}
+.analysis-item.change-detection-option.expanded > .analysis-thumbnail {
+    display: none;
+}
+.analysis-item.change-detection-option.expanded > .analysis-info {
+    display: none !important;
+}
+.cd-ui {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+}
+.cd-setup-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+.cd-field {
+    display: flex;
+    flex-direction: column;
+}
+.cd-field > label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #3c4043;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.cd-field select,
+.cd-field input[type="number"] {
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #c7cace;
+    border-radius: 4px;
+    background: white;
+    min-width: 0;  /* allow the grid column to clip long option text */
+    width: 100%;
+}
+.cd-action-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.cd-run-btn {
+    flex-shrink: 0;
+}
+.cd-status {
+    font-size: 12px;
+    color: #5f6368;
+    flex: 1;
+    min-height: 16px;
+}
+.cd-status.error {
+    color: #c41e1e;
+}
+.cd-results-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* .cd-result-item reuses .td-result-item styling; this class only adds
+   vertical spacing for the extra change-detection-specific rows. */
+.cd-result-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.cd-result-pair {
+    font-size: 11px;
+    color: #5f6368;
+    line-height: 1.4;
+}
+.cd-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+}
+.cd-stat {
+    background: #f8f9fa;
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 12px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.cd-stat-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.cd-stat-value { font-size: 15px; font-weight: 700; margin-top: 2px; }
+.cd-stat.gained .cd-stat-value { color: #1bbf4d; }
+.cd-stat.lost .cd-stat-value { color: #dc2626; }
+.cd-stat.unchanged .cd-stat-value { color: #5f6368; }
 
 .right-tab-content {
     display: none;
@@ -4391,7 +4602,7 @@ body {
     background: rgba(255, 255, 255, 0.5);
 }
 
-/* ===== PROMPT CURSOR (shared by Target Detection & SAM2) ===== */
+/* ===== PROMPT CURSOR (shared by Target Detection & SAM3) ===== */
 .prompt-cursor,
 .prompt-cursor * ,
 .prompt-cursor .leaflet-tile-pane,
@@ -4857,15 +5068,26 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    background: #ff0000;
+    width: 16px;
+    height: 16px;
     color: white;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     border-radius: 50%;
-    border: 2px solid white;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+}
+
+.td-positive span {
+    background: rgba(0, 191, 255, 0.85);
+    border: 1.5px solid #0088cc;
+    box-shadow: 0 0 4px rgba(0, 191, 255, 0.5);
+}
+
+.td-negative span {
+    background: rgba(255, 68, 68, 0.85);
+    border: 1.5px solid #cc0000;
+    box-shadow: 0 0 4px rgba(255, 68, 68, 0.5);
 }
 
 /* ========== Target Detection Results List ========== */
@@ -4969,73 +5191,70 @@ body {
 }
 
 /* Training loss chart modal */
+/* Live Training Loss Modal */
 .td-training-modal {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
     z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    bottom: 20px;
+    right: 20px;
+    pointer-events: auto;
 }
 
-.td-training-modal-backdrop {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+.td-training-live {
+    width: 360px;
+    background: #1e1e2e;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    border: 1px solid rgba(124, 77, 255, 0.3);
 }
 
 .td-training-modal-content {
     position: relative;
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    max-width: 90vw;
-    max-height: 90vh;
-    overflow: hidden;
 }
 
 .td-training-modal-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid #e0e0e0;
+    padding: 10px 14px;
+    background: rgba(124, 77, 255, 0.15);
     font-weight: 600;
-    font-size: 14px;
-    color: #333;
+    font-size: 13px;
+    color: #e0e0e0;
 }
 
-.td-training-modal-close {
-    width: 28px;
-    height: 28px;
+.td-training-close-btn {
+    background: none;
     border: none;
-    background: #f5f5f5;
-    border-radius: 50%;
-    font-size: 14px;
+    color: #a0a0c0;
+    font-size: 16px;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #666;
-    transition: background 0.15s;
+    padding: 0 4px;
+    line-height: 1;
+}
+.td-training-close-btn:hover {
+    color: #fff;
 }
 
-.td-training-modal-close:hover {
-    background: #e0e0e0;
-    color: #333;
+.td-training-step {
+    font-size: 12px;
+    font-weight: 500;
+    color: #a0a0c0;
+    font-variant-numeric: tabular-nums;
 }
 
-.td-training-modal-content img {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    padding: 8px;
+.td-training-chart-wrap {
+    height: 180px;
+    padding: 8px 10px 4px;
+}
+
+.td-training-loss-value {
+    padding: 6px 14px 10px;
+    font-size: 12px;
+    color: #b0b0d0;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .td-result-colorbar {
@@ -5048,11 +5267,11 @@ body {
     align-items: center;
     margin-top: 6px;
     padding: 4px 8px;
-    background: #fff3e0;
+    background: #ffebee;
     border-radius: 4px;
     font-size: 12px;
     font-weight: 600;
-    color: #e65100;
+    color: #c62828;
 }
 
 /* ========== Mangrove Segmentation UI ========== */
@@ -5144,6 +5363,39 @@ body {
 .ms-status.error {
     background: #ffebee;
     color: #c62828;
+}
+
+.ms-queue-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    margin: 4px 0;
+    background: #fff8e1;
+    color: #8d6e00;
+    border: 1px solid #ffe082;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.ms-queue-text {
+    flex: 1;
+}
+
+.ms-queue-cancel {
+    background: transparent;
+    border: none;
+    color: #8d6e00;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.ms-queue-cancel:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .ms-results-list {
@@ -5248,25 +5500,25 @@ body {
     color: #00695c;
 }
 
-/* ========== SAM2 Segmentation UI ========== */
+/* ========== SAM3 Segmentation UI ========== */
 
-.analysis-item.sam2-option.expanded {
+.analysis-item.sam3-option.expanded {
     border-color: #7b1fa2;
     flex-direction: column;
     overflow: hidden;
 }
 
-.analysis-item.sam2-option.expanded > .analysis-thumbnail {
+.analysis-item.sam3-option.expanded > .analysis-thumbnail {
     width: 60px;
     height: 60px;
     align-self: flex-start;
 }
 
-.analysis-item.sam2-option.expanded > .analysis-info {
+.analysis-item.sam3-option.expanded > .analysis-info {
     width: 100%;
 }
 
-.sam2-ui {
+.sam3-ui {
     padding: 10px;
     border-top: 1px solid #eee;
     background: #fafafa;
@@ -5275,14 +5527,14 @@ body {
     flex-basis: 100%;
 }
 
-.sam2-setup {
+.sam3-setup {
     display: flex;
     flex-direction: column;
     gap: 8px;
     width: 100%;
 }
 
-.sam2-row {
+.sam3-row {
     display: flex;
     gap: 6px;
     align-items: center;
@@ -5291,13 +5543,13 @@ body {
     flex-wrap: wrap;
 }
 
-.sam2-row .sam2-btn {
+.sam3-row .sam3-btn {
     flex-shrink: 0;
     padding: 6px 8px;
     font-size: 11px;
 }
 
-.sam2-btn {
+.sam3-btn {
     padding: 6px 12px;
     border: 1px solid #ddd;
     background: white;
@@ -5307,47 +5559,47 @@ body {
     white-space: nowrap;
 }
 
-.sam2-btn:hover:not(:disabled) {
+.sam3-btn:hover:not(:disabled) {
     background: #f5f5f5;
 }
 
-.sam2-btn:disabled {
+.sam3-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-.sam2-btn.active {
+.sam3-btn.active {
     background: #7b1fa2;
     color: white;
     border-color: #7b1fa2;
 }
 
-.sam2-btn.primary {
+.sam3-btn.primary {
     background: #7b1fa2;
     color: white;
     border-color: #7b1fa2;
 }
 
-.sam2-btn.primary:hover:not(:disabled) {
+.sam3-btn.primary:hover:not(:disabled) {
     background: #6a1b9a;
 }
 
-.sam2-btn.save {
+.sam3-btn.save {
     background: #e91e63;
     color: white;
     border-color: #e91e63;
 }
 
-.sam2-btn.save:hover:not(:disabled) {
+.sam3-btn.save:hover:not(:disabled) {
     background: #c2185b;
 }
 
-.sam2-btn #sam2-count {
+.sam3-btn #sam3-count {
     display: inline;
     margin-left: 2px;
 }
 
-.sam2-mode-positive {
+.sam3-mode-positive {
     background: #22cc44 !important;
     color: white !important;
     font-weight: bold;
@@ -5355,7 +5607,7 @@ body {
     min-width: 28px;
 }
 
-.sam2-mode-negative {
+.sam3-mode-negative {
     background: #ee3344 !important;
     color: white !important;
     font-weight: bold;
@@ -5363,12 +5615,12 @@ body {
     min-width: 28px;
 }
 
-.sam2-marker-label {
+.sam3-marker-label {
     background: transparent !important;
     border: none !important;
 }
 
-.sam2-marker-label span {
+.sam3-marker-label span {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -5379,15 +5631,15 @@ body {
     font-weight: bold;
 }
 
-/* SAM2 Saved Masks List */
-.sam2-saved-list {
+/* SAM3 Saved Masks List */
+.sam3-saved-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
     margin-top: 8px;
 }
 
-.sam2-mask-item {
+.sam3-mask-item {
     background: white;
     border: 2px solid #e0e0e0;
     border-radius: 8px;
@@ -5395,25 +5647,25 @@ body {
     transition: border-color 0.2s, background 0.2s;
 }
 
-.sam2-mask-item[data-visible="true"] {
+.sam3-mask-item[data-visible="true"] {
     border-color: #7b1fa2;
     background: #f3e5f5;
 }
 
-.sam2-mask-header {
+.sam3-mask-header {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.sam2-mask-color {
+.sam3-mask-color {
     width: 32px;
     height: 32px;
     border-radius: 6px;
     flex-shrink: 0;
 }
 
-.sam2-mask-info {
+.sam3-mask-info {
     flex: 1;
     min-width: 0;
     display: flex;
@@ -5421,25 +5673,25 @@ body {
     gap: 2px;
 }
 
-.sam2-mask-name {
+.sam3-mask-name {
     font-size: 13px;
     font-weight: 600;
     color: #333;
 }
 
-.sam2-mask-status {
+.sam3-mask-status {
     font-size: 11px;
     color: #888;
 }
 
-.sam2-mask-actions {
+.sam3-mask-actions {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
 }
 
-.sam2-mask-toggle-btn,
-.sam2-mask-remove-btn {
+.sam3-mask-toggle-btn,
+.sam3-mask-remove-btn {
     width: 28px;
     height: 28px;
     border: 1px solid #ddd;
@@ -5453,12 +5705,12 @@ body {
     padding: 0;
 }
 
-.sam2-mask-toggle-btn:hover {
+.sam3-mask-toggle-btn:hover {
     background: #f3e5f5;
     border-color: #7b1fa2;
 }
 
-.sam2-mask-remove-btn:hover {
+.sam3-mask-remove-btn:hover {
     background: #fff5f5;
     border-color: #e53935;
     color: #e53935;
@@ -5626,6 +5878,21 @@ body {
     object-fit: contain;
     background: #f0f3f6;
     flex-shrink: 0;
+}
+
+/* Pixel/percentage stats panel — appears under the SA colorbar after a
+   threshold is applied. Green tint matches the spectral-analysis theme. */
+.sa-result-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+    padding: 4px 8px;
+    background: #e8f5e9;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #2e7d32;
 }
 
 .sa-result-info {
@@ -6864,11 +7131,19 @@ body {
     padding: 6px 8px;
     background: #f1f3f4;
     border-radius: 6px;
-    cursor: pointer;
+    /* Whole row is a drag handle — grab cursor makes that discoverable. */
+    cursor: grab;
     user-select: none;
     transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
     font-size: 12px;
     border: 2px solid transparent;
+}
+.layer-item:active {
+    cursor: grabbing;
+}
+.layer-item .layer-name {
+    /* Double-click affordance — the name is click-to-rename. */
+    cursor: text;
 }
 
 .layer-item:hover {
@@ -6892,8 +7167,71 @@ body {
 }
 
 .layer-item.drag-over {
-    border-top: 2px solid #ff6d00;
-    padding-top: 4px;
+    /* Per-item highlight kept harmless — the authoritative cue is the
+       horizontal `.layer-drop-indicator` rendered inside the list. */
+    background: #e8f0fe;
+}
+
+/* The .layer-list is positioned so the drop indicator (absolute child) lands
+   at the right offset. min-height gives the user a hit area below the last
+   row so dragging "down past the end" still drops cleanly at the bottom. */
+#layer-list, .layer-list {
+    position: relative;
+    min-height: 56px;
+}
+
+/* Horizontal bar marking exactly where the dragged layer will land. We use
+   a vibrant orange (deliberately *not* the panel's blue accent #1a73e8) so
+   it's instantly distinguishable from selected-row borders. Pulsing glow
+   draws the eye even at the edge of the viewport. */
+.layer-drop-indicator {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    height: 4px;
+    background: #ff6d00;
+    border-radius: 3px;
+    box-shadow:
+        0 0 0 2px rgba(255, 109, 0, 0.35),
+        0 0 12px 2px rgba(255, 109, 0, 0.6);
+    pointer-events: none;
+    z-index: 10;
+    transition: top 80ms ease;
+    animation: layer-drop-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes layer-drop-pulse {
+    0%, 100% {
+        box-shadow:
+            0 0 0 2px rgba(255, 109, 0, 0.35),
+            0 0 12px 2px rgba(255, 109, 0, 0.6);
+    }
+    50% {
+        box-shadow:
+            0 0 0 3px rgba(255, 109, 0, 0.5),
+            0 0 18px 4px rgba(255, 109, 0, 0.85);
+    }
+}
+
+/* Caret triangles at each end so the indicator is clearly an "insert
+   between" marker rather than just a border on a row. */
+.layer-drop-indicator::before,
+.layer-drop-indicator::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    width: 0;
+    height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+.layer-drop-indicator::before {
+    left: -6px;
+    border-left: 7px solid #ff6d00;
+}
+.layer-drop-indicator::after {
+    right: -6px;
+    border-right: 7px solid #ff6d00;
 }
 
 .layer-drag-handle {
@@ -6937,6 +7275,232 @@ body {
 .layer-hidden .layer-visibility-indicator {
     background: #dadce0;
     color: #666;
+}
+
+/* Mask role chip — clickable badge that controls how this layer participates
+   in the composite mask. Four states (off / inc / exc / add) color-coded so
+   the user can read the whole stack at a glance. Sits between the layer name
+   and the visibility indicator.
+
+   Click cycles forward; double-click resets to 'off'. The compositor
+   (mask-composite.js) listens to `mask:registry-changed` and rebuilds an
+   overlay PNG every time any chip changes.
+
+   Off state is intentionally low-contrast so active chips visually dominate. */
+.layer-mask-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+    border: 1px solid transparent;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.layer-mask-chip:hover {
+    transform: scale(1.08);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+.layer-mask-chip[data-role="off"] {
+    background: #f1f3f4;
+    color: #9aa0a6;
+    border-color: #dadce0;
+}
+.layer-mask-chip[data-role="inc"] {
+    background: #e6f4ea;
+    color: #137333;
+    border-color: #34a853;
+}
+.layer-mask-chip[data-role="exc"] {
+    background: #fce8e6;
+    color: #c5221f;
+    border-color: #ea4335;
+}
+.layer-mask-chip[data-role="add"] {
+    background: #e8f0fe;
+    color: #1967d2;
+    border-color: #4285f4;
+}
+
+/* Disabled mask-chip variant — non-interactive marker that this row can
+   participate in a drag-merge mask group. Binary masks get a strong yellow
+   chip; continuous analysis overlays get a softer lavender chip so the
+   user can still tell them apart at a glance. */
+.layer-mask-chip[data-disabled="true"] {
+    cursor: default;
+    pointer-events: none;
+    width: auto;
+    min-width: 38px;
+    padding: 0 6px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    opacity: 1;
+    background: #f0c419;
+    color: #fff;
+    border-color: #c69a14;
+}
+.layer-mask-chip[data-disabled="true"]:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+/* Mask group row — replaces the standard .layer-item row when 2+ binary
+   masks are merged. Items lay out left-to-right with operator buttons
+   between. Each item has a baseline width of ~half the normal row; with
+   3+ items the row scrolls horizontally inside its own container. */
+.layer-item.layer-group-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    background: #fff8e1;
+    border: 1px solid #f0c419;
+    border-radius: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    cursor: grab;
+}
+.layer-item.layer-group-row.layer-hidden {
+    opacity: 0.55;
+}
+.layer-item.layer-group-row .layer-group-handle {
+    flex-shrink: 0;
+    color: #999;
+    cursor: grab;
+    padding: 0 4px;
+    user-select: none;
+}
+.layer-group-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 calc(50% - 24px);
+    min-width: 110px;
+    background: #f1f3f4;
+    border: 1px solid #dadce0;
+    border-radius: 4px;
+    padding: 3px 6px;
+    cursor: grab;
+    box-sizing: border-box;
+}
+.layer-group-item.layer-group-item-hidden {
+    opacity: 0.55;
+}
+.layer-group-item .layer-type-icon {
+    flex-shrink: 0;
+    font-size: 12px;
+}
+.layer-group-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 500;
+    color: #333;
+}
+.layer-group-remove {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 11px;
+    color: #c5221f;
+    background: transparent;
+    user-select: none;
+    transition: background 0.1s ease;
+}
+.layer-group-remove:hover {
+    background: rgba(197, 34, 31, 0.12);
+}
+.layer-group-operator {
+    flex: 0 0 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    background: #1a73e8;
+    color: #fff;
+    border-radius: 4px;
+    user-select: none;
+    transition: background 0.1s ease, transform 0.1s ease;
+}
+.layer-group-operator:hover {
+    transform: scale(1.08);
+    background: #1967d2;
+}
+.layer-group-operator[data-role="add"] {
+    background: #4285f4;
+}
+.layer-group-operator[data-role="exc"] {
+    background: #ea4335;
+}
+
+/* Group's ON/OFF visibility indicator on the right edge — same affordance
+   as the per-row indicator, but tied to whether the composite mask is on. */
+.layer-group-row .layer-group-visibility {
+    flex-shrink: 0;
+    margin-left: auto;
+    cursor: pointer;
+}
+
+/* Within-group swap drop target — when dragging an item over another item
+   in the same group, the target item gets a vivid blue outline so the user
+   knows their drop will swap the two and re-wire the operator chain. */
+.layer-group-item.group-item-drop-target {
+    outline: 2px dashed #1a73e8;
+    outline-offset: -2px;
+    background: rgba(26, 115, 232, 0.18);
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.35);
+}
+
+/* Drop highlight when hovering the middle 40% of a binary row during drag —
+   indicates "drop here to merge" rather than reorder. */
+.layer-item.merge-drop-target {
+    outline: 3px dashed #f0c419;
+    outline-offset: -3px;
+    background: rgba(240, 196, 25, 0.32) !important;
+    box-shadow: 0 0 0 4px rgba(240, 196, 25, 0.45), 0 0 14px 4px rgba(240, 196, 25, 0.55);
+    position: relative;
+}
+.layer-item.merge-drop-target::after {
+    content: '＋ Merge';
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+    background: #b88600;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    pointer-events: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+
+/* Composite overlay — the compositor pins it on top of the analysis pane via
+   inline z-index. This selector is only here so the user can spot it in
+   devtools and so future tweaks (e.g. animated outline) have a hook. */
+img.mask-composite-overlay {
+    pointer-events: none;
 }
 
 /* Compare button */
@@ -7023,6 +7587,7 @@ body {
 
 .dual-map-column {
     flex: 1;
+    min-width: 0;
 }
 
 .dual-map-column h4 {
@@ -7041,15 +7606,36 @@ body {
 
 .dual-layer-list {
     min-height: 50px;
-    max-height: 160px;
+    max-height: 260px;
     overflow-y: auto;
     border: 1px dashed #dadce0;
     border-radius: 8px;
     padding: 6px;
     display: flex;
     flex-direction: column;
+    gap: 6px;
+}
+
+/* Sectioned layer picker (Time A / Time B / Change Detection) inside the
+   compare-mode assignment lists. */
+.dual-layer-section {
+    display: flex;
+    flex-direction: column;
     gap: 3px;
 }
+.dual-layer-section-header {
+    font-size: 10px;
+    font-weight: 700;
+    color: #5f6368;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 4px 4px 2px 4px;
+    border-bottom: 1px solid #ececec;
+    margin-bottom: 2px;
+}
+.dual-layer-section.dual-section-a .dual-layer-section-header { color: #1a73e8; }
+.dual-layer-section.dual-section-b .dual-layer-section-header { color: #0f9d58; }
+.dual-layer-section.dual-section-cd .dual-layer-section-header { color: #e67e00; }
 
 .dual-layer-item {
     display: flex;
@@ -7061,6 +7647,11 @@ body {
     font-size: 11px;
     cursor: pointer;
     transition: background 0.15s;
+    min-width: 0;
+}
+
+.dual-layer-item .layer-type-icon {
+    flex-shrink: 0;
 }
 
 .dual-layer-item:hover {
@@ -7073,7 +7664,8 @@ body {
 }
 
 .dual-layer-item .layer-name {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -7087,7 +7679,7 @@ body {
     padding: 12px 0;
 }
 
-/* ===== Spectral Inspector Cursor (diamond, distinct from target/SAM2 circle) ===== */
+/* ===== Spectral Inspector Cursor (diamond, distinct from target/SAM3 circle) ===== */
 .spectral-cursor,
 .spectral-cursor *,
 .spectral-cursor .leaflet-tile-pane,
@@ -7170,4 +7762,302 @@ body {
 .overlay-value-id {
     font-size: 9px;
     color: #999;
+}
+
+/* ===== Symbology (Visualization + Rendering) ===== */
+.symbology-block {
+    margin-top: 10px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #fafbfc 0%, #f4f6f8 100%);
+    border: 1px solid #e6e8eb;
+    overflow: hidden;
+}
+
+.symbology-section {
+    border-bottom: 1px solid #e6e8eb;
+}
+
+.symbology-section:last-child {
+    border-bottom: none;
+}
+
+.symbology-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: transparent;
+}
+
+.symbology-toggle-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: #3c4043;
+    text-align: left;
+}
+
+.symbology-chevron {
+    font-size: 10px;
+    color: #5f6368;
+    width: 10px;
+    display: inline-block;
+    transition: transform 120ms ease;
+}
+
+.symbology-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #5f6368;
+}
+
+.symbology-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.symbology-icon-btn {
+    background: #ffffff;
+    border: 1px solid #dadce0;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #1a73e8;
+    cursor: pointer;
+    transition: all 120ms ease;
+    line-height: 1;
+}
+
+.symbology-icon-btn:hover {
+    background: #e8f0fe;
+    border-color: #1a73e8;
+    box-shadow: 0 1px 2px rgba(26,115,232,0.15);
+}
+
+.symbology-icon-btn:active {
+    transform: scale(0.96);
+}
+
+.symbology-section-body {
+    padding: 4px 10px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* When the band drag-drop or keyboard-shortcut pieces live inside a section
+   body they bring their own outer margins from legacy styles — neutralise. */
+.symbology-section-body > .band-dnd-container,
+.symbology-section-body > .keyboard-shortcut-section {
+    margin: 0;
+}
+
+.symbology-section.collapsed .symbology-section-body {
+    display: none;
+}
+
+/* Mode toggle (segmented control) */
+.mode-toggle {
+    display: inline-flex;
+    background: #eef0f2;
+    border-radius: 999px;
+    padding: 2px;
+    gap: 0;
+    align-self: flex-start;
+}
+
+.mode-toggle-option {
+    background: transparent;
+    border: none;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #5f6368;
+    cursor: pointer;
+    border-radius: 999px;
+    transition: all 140ms ease;
+    line-height: 1;
+}
+
+.mode-toggle-option:hover:not(.active) {
+    color: #3c4043;
+}
+
+.mode-toggle-option.active {
+    background: #1a73e8;
+    color: #ffffff;
+    box-shadow: 0 1px 3px rgba(26,115,232,0.35);
+}
+
+.mode-panel.hidden {
+    display: none;
+}
+
+/* Min/Max numeric inputs (per-band R/G/B grid) */
+.minmax-grid {
+    display: grid;
+    grid-template-columns: 22px 1fr 1fr;
+    gap: 4px 8px;
+    align-items: center;
+}
+
+.minmax-col-head {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #5f6368;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+.minmax-channel-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+    user-select: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+}
+
+.minmax-channel-tag.tag-r { background: #ea4335; }
+.minmax-channel-tag.tag-g { background: #34a853; }
+.minmax-channel-tag.tag-b { background: #1a73e8; }
+
+.symbology-num-input {
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid #dadce0;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    color: #202124;
+    background: #ffffff;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+    -moz-appearance: textfield;
+}
+
+.symbology-num-input::-webkit-inner-spin-button,
+.symbology-num-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.symbology-num-input:focus {
+    outline: none;
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 3px rgba(26,115,232,0.15);
+}
+
+/* Rendering rows: label + slider + numeric */
+.render-row {
+    display: grid;
+    grid-template-columns: 70px 1fr 56px;
+    align-items: center;
+    gap: 8px;
+}
+
+.render-row > label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #3c4043;
+    user-select: none;
+}
+
+.render-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: #dadce0;
+    border-radius: 999px;
+    outline: none;
+    margin: 0;
+    padding: 0;
+}
+
+.render-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #ffffff;
+    border: 2px solid #1a73e8;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+    transition: transform 100ms ease, box-shadow 100ms ease;
+}
+
+.render-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.18);
+    box-shadow: 0 2px 6px rgba(26,115,232,0.35);
+}
+
+.render-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #ffffff;
+    border: 2px solid #1a73e8;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+    transition: transform 100ms ease, box-shadow 100ms ease;
+}
+
+.render-slider::-moz-range-thumb:hover {
+    transform: scale(1.18);
+    box-shadow: 0 2px 6px rgba(26,115,232,0.35);
+}
+
+.render-num {
+    width: 100%;
+    padding: 3px 6px;
+    border: 1px solid #dadce0;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    text-align: right;
+    color: #202124;
+    background: #ffffff;
+    -moz-appearance: textfield;
+}
+
+.render-num::-webkit-inner-spin-button,
+.render-num::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.render-num:focus {
+    outline: none;
+    border-color: #1a73e8;
+}
+
+/* Apply button inside symbology section — slightly tighter */
+.symbology-section-body .apply-vis-btn {
+    align-self: stretch;
+    margin-top: 2px;
+}
+
+/* Tile layer container is `<div class="leaflet-layer">`; filter is applied there. The
+   transition smooths quick slider drags so back-to-back updates blend instead of jitter. */
+.leaflet-tile-pane .leaflet-layer {
+    transition: filter 60ms linear;
 }

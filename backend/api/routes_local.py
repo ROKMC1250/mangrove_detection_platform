@@ -7,6 +7,8 @@ custom visualization, and target detection for local images.
 
 import os
 import hashlib
+import json
+import queue
 import time
 import base64
 import threading
@@ -15,10 +17,12 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
 from PIL import Image
 import requests as url_requests
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..core.config import OUTPUTS_DIR
@@ -75,9 +79,16 @@ class LocalGrayscaleRequest(BaseModel):
     max_val: float = 3000
 
 
-def _read_band(image_dir: str, algorithm_dir: str, band_file: str) -> np.ndarray:
-    """Read a single band TIF file and return as 2D float32 array."""
+def _read_band(image_dir: str, algorithm_dir: str, band_file: str,
+                target_shape: tuple = None) -> np.ndarray:
+    """Read a single band TIF file and return as 2D float32 array.
+
+    If target_shape is provided as (height, width), resample using bicubic
+    interpolation to match that resolution.
+    """
     cache_key = f"{image_dir}/{algorithm_dir}/{band_file}"
+    if target_shape:
+        cache_key += f"@{target_shape[0]}x{target_shape[1]}"
     if cache_key in _LOCAL_RASTER_CACHE:
         return _LOCAL_RASTER_CACHE[cache_key]
 
@@ -86,10 +97,35 @@ def _read_band(image_dir: str, algorithm_dir: str, band_file: str) -> np.ndarray
         raise HTTPException(status_code=404, detail=f"File not found: {band_file}")
 
     with rasterio.open(path) as src:
-        data = src.read(1).astype(np.float32)
+        if target_shape and (src.height, src.width) != target_shape:
+            data = src.read(1, out_shape=target_shape,
+                           resampling=Resampling.cubic).astype(np.float32)
+        else:
+            data = src.read(1).astype(np.float32)
 
     _LOCAL_RASTER_CACHE[cache_key] = data
     return data
+
+
+def _get_max_band_shape(image_dir: str, algorithm_dir: str, band_files: list) -> tuple:
+    """Scan band files and return the largest (height, width) among them."""
+    max_h, max_w = 0, 0
+    for bf in band_files:
+        path = os.path.join(LOCAL_BASE_DIR, image_dir, algorithm_dir, bf)
+        if os.path.exists(path):
+            with rasterio.open(path) as src:
+                if src.height > max_h or src.width > max_w:
+                    max_h = max(max_h, src.height)
+                    max_w = max(max_w, src.width)
+    return (max_h, max_w)
+
+
+def _read_all_bands_resampled(image_dir: str, algorithm_dir: str,
+                               band_files: list) -> list:
+    """Read all bands, resampling to the highest resolution using bicubic."""
+    target_shape = _get_max_band_shape(image_dir, algorithm_dir, band_files)
+    return [_read_band(image_dir, algorithm_dir, bf, target_shape=target_shape)
+            for bf in band_files]
 
 
 def _stretch_to_uint8(data: np.ndarray, min_val: float, max_val: float, gamma: float = 1.0) -> np.ndarray:
@@ -249,7 +285,7 @@ def get_raw_bands(req: RawBandsRequest):
 
     # Read bands from disk (cached in _LOCAL_RASTER_CACHE after first read)
     t1 = _time.time()
-    band_arrays = [_read_band(req.image_dir, req.algorithm_dir, bf) for bf in band_files]
+    band_arrays = _read_all_bands_resampled(req.image_dir, req.algorithm_dir, band_files)
     print(f"RAW-BANDS - Disk read: {_time.time()-t1:.2f}s ({len(band_files)} bands)")
 
     h, w = band_arrays[0].shape
@@ -320,7 +356,7 @@ def gpu_load_bands(req: GpuLoadRequest):
     else:
         # Step 1: Read bands from disk (only slow part, happens once)
         t1 = _time.time()
-        band_arrays = [_read_band(req.image_dir, req.algorithm_dir, bf) for bf in band_files]
+        band_arrays = _read_all_bands_resampled(req.image_dir, req.algorithm_dir, band_files)
         print(f"GPU-LOAD - Disk read: {_time.time()-t1:.2f}s ({len(band_files)} bands)")
 
         # Step 2: Load to GPU (stacks + transfers, cached for later analyze/detection)
@@ -400,9 +436,10 @@ def visualize_rgb(req: LocalVizRequest):
         raise HTTPException(status_code=400, detail="Exactly 3 bands required for RGB")
 
     try:
-        r_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[0])
-        g_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[1])
-        b_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[2])
+        tgt = _get_max_band_shape(req.image_dir, req.algorithm_dir, req.bands)
+        r_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[0], target_shape=tgt)
+        g_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[1], target_shape=tgt)
+        b_data = _read_band(req.image_dir, req.algorithm_dir, req.bands[2], target_shape=tgt)
 
         r_uint8 = _stretch_to_uint8(r_data, req.min_val, req.max_val, req.gamma)
         g_uint8 = _stretch_to_uint8(g_data, req.min_val, req.max_val, req.gamma)
@@ -571,7 +608,7 @@ def analyze_local_image(req: LocalAnalyzeRequest):
     # Pre-load all bands to GPU cache for fast target detection later
     band_files = sorted(f for f in os.listdir(dir_path) if f.endswith('.tif') and f.startswith('after_'))
     gpu_cache_key = f"{req.image_dir}/{req.algorithm_dir}"
-    band_arrays = [_read_band(req.image_dir, req.algorithm_dir, bf) for bf in band_files]
+    band_arrays = _read_all_bands_resampled(req.image_dir, req.algorithm_dir, band_files)
     load_image_to_gpu(gpu_cache_key, band_arrays)
 
     analysis_results = {}
@@ -584,13 +621,15 @@ def analyze_local_image(req: LocalAnalyzeRequest):
     if not sample_file:
         raise HTTPException(status_code=400, detail="No suitable bands found for analysis")
 
-    sample_data = _read_band(req.image_dir, req.algorithm_dir, sample_file)
+    # Use the max resolution across all bands for consistent analysis
+    target_shape = _get_max_band_shape(req.image_dir, req.algorithm_dir, band_files)
+    sample_data = _read_band(req.image_dir, req.algorithm_dir, sample_file, target_shape=target_shape)
     h, w = sample_data.shape
 
     # --- Cloud Mask ---
     if blue_file:
         try:
-            blue_data = _read_band(req.image_dir, req.algorithm_dir, blue_file)
+            blue_data = _read_band(req.image_dir, req.algorithm_dir, blue_file, target_shape=target_shape)
             valid = blue_data[np.isfinite(blue_data)]
             if len(valid) > 0:
                 threshold_val = float(np.percentile(valid, 95))
@@ -615,8 +654,8 @@ def analyze_local_image(req: LocalAnalyzeRequest):
     nir_data = None
     red_data = None
     if nir_file and red_file:
-        nir_data = _read_band(req.image_dir, req.algorithm_dir, nir_file)
-        red_data = _read_band(req.image_dir, req.algorithm_dir, red_file)
+        nir_data = _read_band(req.image_dir, req.algorithm_dir, nir_file, target_shape=target_shape)
+        red_data = _read_band(req.image_dir, req.algorithm_dir, red_file, target_shape=target_shape)
 
     if nir_data is not None and red_data is not None:
         try:
@@ -703,12 +742,16 @@ def local_compute_spectral_index(req: LocalSpectralIndexRequest):
     index_type = req.index_type.lower()
     print(f"LOCAL SPECTRAL INDEX - Computing {index_type} for {req.image_dir}/{req.algorithm_dir}")
 
+    # Determine max resolution across all bands for consistent resampling
+    all_band_files = sorted(f for f in os.listdir(dir_path) if f.endswith('.tif') and f.startswith('after_'))
+    tgt = _get_max_band_shape(req.image_dir, req.algorithm_dir, all_band_files) if all_band_files else None
+
     # Helper to read band by role
     def read_role(role):
         bf = _find_band_file(req.image_dir, req.algorithm_dir, role)
         if not bf:
             return None
-        return _read_band(req.image_dir, req.algorithm_dir, bf)
+        return _read_band(req.image_dir, req.algorithm_dir, bf, target_shape=tgt)
 
     # Helper to read band by filename (for custom)
     def read_by_name(band_name):
@@ -717,7 +760,7 @@ def local_compute_spectral_index(req: LocalSpectralIndexRequest):
         for bf in band_files:
             name_part = bf.replace('after_', '').replace('.tif', '')
             if name_part.upper() == band_name.upper() or band_name.upper() in bf.upper():
-                return _read_band(req.image_dir, req.algorithm_dir, bf)
+                return _read_band(req.image_dir, req.algorithm_dir, bf, target_shape=tgt)
         # Also try role mapping
         role_map = {'B2': 'BLUE', 'B3': 'GREEN', 'B4': 'RED', 'B5': 'REDEDGE1',
                     'B6': 'REDEDGE2', 'B8': 'NIR', 'BLUE': 'BLUE', 'GREEN': 'GREEN',
@@ -729,7 +772,7 @@ def local_compute_spectral_index(req: LocalSpectralIndexRequest):
         try:
             idx = int(band_name.replace('Band', '').replace('band', '').replace('MS', '')) - 1
             if 0 <= idx < len(band_files):
-                return _read_band(req.image_dir, req.algorithm_dir, band_files[idx])
+                return _read_band(req.image_dir, req.algorithm_dir, band_files[idx], target_shape=tgt)
         except (ValueError, IndexError):
             pass
         return None
@@ -858,7 +901,16 @@ def local_apply_threshold_range(req: LocalThresholdRequest):
     if index_data is None:
         raise HTTPException(status_code=400, detail=f"No cached index data for {req.model_id}. Run analyze first.")
 
-    mask = (index_data >= req.min_threshold) & (index_data <= req.max_threshold)
+    # The path-keyed entry sometimes holds a raw ndarray (legacy) and sometimes
+    # a dict — normalize.
+    if isinstance(index_data, dict):
+        index_array = index_data.get('index_data') or index_data.get('data')
+    else:
+        index_array = index_data
+    if index_array is None:
+        raise HTTPException(status_code=400, detail=f"No cached index data for {req.model_id}.")
+
+    mask = (index_array >= req.min_threshold) & (index_array <= req.max_threshold)
     h, w = mask.shape
 
     # Red overlay for binary mask
@@ -870,11 +922,33 @@ def local_apply_threshold_range(req: LocalThresholdRequest):
     overlay_url = rgba_to_base64_gpu(rgba)
     preview_url = _make_preview_b64(rgba[:, :, :3], mask)
 
+    # Register a stable id-keyed entry alongside the path-keyed entry so
+    # change-detection can look up this mask by id.
+    analysis_id = f"local-sa-{int(time.time() * 1000)}"
+    with _LOCAL_INDEX_CACHE_LOCK:
+        _LOCAL_INDEX_CACHE[analysis_id] = {
+            'index_data': index_array,
+            'binary_mask': mask,
+            'last_min_threshold': float(req.min_threshold),
+            'last_max_threshold': float(req.max_threshold),
+            'model_id': req.model_id,
+            'image_dir': req.image_dir,
+            'algorithm_dir': req.algorithm_dir,
+        }
+
+    # Mirror TD response shape: pixel counts so the SA card can show stats.
+    n_detected = int(mask.sum())
+    total_pixels = int(mask.size)
+    detection_percentage = round(100.0 * n_detected / total_pixels, 2) if total_pixels else 0.0
+
     return {
+        'analysis_id': analysis_id,
         'overlay_url': overlay_url,
         'preview_url': preview_url,
         'min_threshold': req.min_threshold,
         'max_threshold': req.max_threshold,
+        'detected_pixels': n_detected,
+        'detection_percentage': detection_percentage,
     }
 
 
@@ -937,9 +1011,10 @@ def local_custom_visualization(req: LocalCustomVizRequest):
         if len(bands) < 3:
             raise HTTPException(status_code=400, detail="3 bands required for RGB composite")
 
-        r_data = _read_band(req.image_dir, req.algorithm_dir, bands[0])
-        g_data = _read_band(req.image_dir, req.algorithm_dir, bands[1])
-        b_data = _read_band(req.image_dir, req.algorithm_dir, bands[2])
+        tgt = _get_max_band_shape(req.image_dir, req.algorithm_dir, bands)
+        r_data = _read_band(req.image_dir, req.algorithm_dir, bands[0], target_shape=tgt)
+        g_data = _read_band(req.image_dir, req.algorithm_dir, bands[1], target_shape=tgt)
+        b_data = _read_band(req.image_dir, req.algorithm_dir, bands[2], target_shape=tgt)
 
         def auto_stretch(d):
             valid = d[np.isfinite(d)]
@@ -969,8 +1044,9 @@ def local_custom_visualization(req: LocalCustomVizRequest):
         band_b_file = viz.get('bandB')
         colormap = viz.get('colormap', 'viridis')
 
-        a_data = _read_band(req.image_dir, req.algorithm_dir, band_a_file)
-        b_data = _read_band(req.image_dir, req.algorithm_dir, band_b_file)
+        tgt = _get_max_band_shape(req.image_dir, req.algorithm_dir, [band_a_file, band_b_file])
+        a_data = _read_band(req.image_dir, req.algorithm_dir, band_a_file, target_shape=tgt)
+        b_data = _read_band(req.image_dir, req.algorithm_dir, band_b_file, target_shape=tgt)
 
         index = compute_normalized_index_gpu(a_data, b_data)
 
@@ -1056,7 +1132,7 @@ def local_run_target_detection(req: LocalTargetDetectionRequest):
         band_files = sorted(f for f in os.listdir(dir_path) if f.endswith('.tif') and f.startswith('after_'))
         if not band_files:
             raise HTTPException(status_code=400, detail="No band files found")
-        band_arrays = [_read_band(req.image_dir, req.algorithm_dir, bf) for bf in band_files]
+        band_arrays = _read_all_bands_resampled(req.image_dir, req.algorithm_dir, band_files)
         gpu_image = load_image_to_gpu(gpu_cache_key, band_arrays)
 
     h, w, n_bands = gpu_image.shape
@@ -1113,6 +1189,8 @@ def local_run_target_detection(req: LocalTargetDetectionRequest):
 
     # Cache
     with _LOCAL_TD_CACHE_LOCK:
+        # Initial run does NOT publish a binary_mask. Change-detection
+        # requires the user to explicitly apply a threshold first.
         _LOCAL_TD_CACHE[detection_id] = {
             'detection_map': detection_map,
             'algorithm': req.algorithm,
@@ -1183,6 +1261,240 @@ def local_run_target_detection(req: LocalTargetDetectionRequest):
     }
 
 
+@router.post("/target-detection/run-stream")
+async def local_run_target_detection_stream(req: LocalTargetDetectionRequest):
+    """
+    SSE streaming variant of `/api/local/target-detection/run`. Emits `training`
+    events each MLP step so the frontend can animate the loss curve while the
+    model trains, then a final `done` event with the full response payload.
+    Non-MLP algorithms go straight to `done` — the endpoint still works but
+    without intermediate events.
+    """
+    from ..services.gpu_compute import (
+        get_gpu_image, load_image_to_gpu, detect_from_gpu_tensor,
+        create_index_visualization_gpu, rgba_to_base64_gpu, build_rgba_and_preview_gpu,
+    )
+    from ..services.target_detection import _run_mlp_detection, ImageDataLoader
+
+    algo_upper = req.algorithm.upper()
+    is_mlp = algo_upper in ('MLP_AMF', 'MLP_ACE')
+
+    # ---- Pre-checks (raise synchronously so the client sees a clean 4xx) ----
+    dir_path = os.path.join(LOCAL_BASE_DIR, req.image_dir, req.algorithm_dir)
+    if not os.path.isdir(dir_path):
+        raise HTTPException(status_code=404, detail="Directory not found")
+
+    gpu_cache_key = f"{req.image_dir}/{req.algorithm_dir}"
+    gpu_image = get_gpu_image(gpu_cache_key)
+    if gpu_image is None:
+        band_files_pre = sorted(f for f in os.listdir(dir_path) if f.endswith('.tif') and f.startswith('after_'))
+        if not band_files_pre:
+            raise HTTPException(status_code=400, detail="No band files found")
+        band_arrays = _read_all_bands_resampled(req.image_dir, req.algorithm_dir, band_files_pre)
+        gpu_image = load_image_to_gpu(gpu_cache_key, band_arrays)
+
+    h, w, n_bands = gpu_image.shape
+    band_files = sorted(f for f in os.listdir(dir_path) if f.endswith('.tif') and f.startswith('after_'))
+
+    # Prepare MLP loader / points once so the worker thread can reuse them.
+    mlp_loader = None
+    mlp_target_pixels = None
+    mlp_neg_pixels = None
+    if is_mlp:
+        cube = gpu_image.cpu().numpy()
+        if req.selected_bands and len(req.selected_bands) > 0:
+            cube = cube[:, :, req.selected_bands]
+        mlp_loader = ImageDataLoader.__new__(ImageDataLoader)
+        mlp_loader.data = cube
+        mlp_loader.transform = None
+        mlp_loader.crs = None
+        mlp_loader.raster_path = None
+        mlp_target_pixels = [
+            (int(p.get('col', p.get('lng', 0))), int(p.get('row', p.get('lat', 0))))
+            for p in req.target_points
+        ]
+        mlp_neg_pixels = [
+            (int(p.get('col', p.get('lng', 0))), int(p.get('row', p.get('lat', 0))))
+            for p in (req.negative_points or [])
+        ]
+
+    def event_generator():
+        progress_queue = queue.Queue() if is_mlp else None
+
+        def on_progress(data):
+            if progress_queue is not None:
+                progress_queue.put(data)
+
+        result_holder = [None]
+        error_holder = [None]
+
+        def run_in_thread():
+            try:
+                if is_mlp:
+                    result_holder[0] = _run_mlp_detection(
+                        mlp_loader, mlp_target_pixels, mlp_neg_pixels,
+                        algo_upper, req.selected_bands,
+                        progress_callback=on_progress,
+                    )
+                else:
+                    result_holder[0] = detect_from_gpu_tensor(
+                        gpu_image, req.target_points, req.algorithm,
+                        selected_bands=req.selected_bands,
+                    )
+            except Exception as e:
+                error_holder[0] = e
+            finally:
+                if progress_queue is not None:
+                    progress_queue.put(None)
+
+        t = threading.Thread(target=run_in_thread, daemon=True)
+        t.start()
+
+        # Stream MLP training steps as they arrive.
+        if is_mlp and progress_queue is not None:
+            while True:
+                try:
+                    data = progress_queue.get(timeout=60)
+                except queue.Empty:
+                    break
+                if data is None:
+                    break
+                evt = {
+                    "step": data.get("step", 0),
+                    "n_steps": data.get("n_steps", 100),
+                    "loss": data["loss_history"][-1] if data.get("loss_history") else None,
+                    "loss_history": data.get("loss_history", []),
+                }
+                yield f"event: training\ndata: {json.dumps(evt)}\n\n"
+
+        t.join(timeout=600)
+
+        if error_holder[0]:
+            yield f"event: error\ndata: {json.dumps({'detail': str(error_holder[0])})}\n\n"
+            return
+        result = result_holder[0]
+        if result is None:
+            yield f"event: error\ndata: {json.dumps({'detail': 'Detection returned no result'})}\n\n"
+            return
+
+        try:
+            final = _build_local_td_response(
+                req, result, (h, w),
+                band_labels_source=[bf.replace('after_', '').replace('.tif', '') for bf in band_files],
+                selected_bands=req.selected_bands,
+            )
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
+            return
+        yield f"event: done\ndata: {json.dumps(final, default=str)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _build_local_td_response(
+    req: "LocalTargetDetectionRequest | UploadedTargetDetectionRequest",
+    result: Dict,
+    hw: tuple,
+    band_labels_source: List[str],
+    selected_bands: Optional[List[int]],
+) -> Dict:
+    """Shared response builder for local and uploaded target-detection paths.
+
+    Pulled out of the non-streaming endpoints so the streaming variants can
+    assemble the same payload after the MLP training events have drained.
+    """
+    from ..services.gpu_compute import (
+        create_index_visualization_gpu, rgba_to_base64_gpu, build_rgba_and_preview_gpu,
+    )
+    h, w = hw
+    detection_map = result['detection_map']
+    threshold = result['threshold']
+    min_val = result['min_val']
+    max_val = result['max_val']
+
+    detection_rgb, _, _ = create_index_visualization_gpu(detection_map, 'jet', min_val, max_val)
+    binary_mask = detection_map >= threshold
+    valid = np.isfinite(detection_map)
+
+    det_rgba, det_preview = build_rgba_and_preview_gpu(detection_rgb, valid)
+    mask_rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    mask_rgb[binary_mask, 0] = 255
+    mask_rgba, mask_preview = build_rgba_and_preview_gpu(mask_rgb, binary_mask)
+
+    detection_id = f"local-td-{int(time.time() * 1000)}"
+    detection_overlay_url = rgba_to_base64_gpu(det_rgba)
+    mask_overlay_url = rgba_to_base64_gpu(mask_rgba)
+
+    with _LOCAL_TD_CACHE_LOCK:
+        # Initial run does NOT publish a binary_mask. Change-detection
+        # requires the user to explicitly apply a threshold first.
+        _LOCAL_TD_CACHE[detection_id] = {
+            'detection_map': detection_map,
+            'algorithm': req.algorithm,
+            'threshold': threshold,
+            'min_val': min_val,
+            'max_val': max_val,
+            'image_size': (h, w),
+            'target_spectrum': result['target_spectrum'],
+        }
+
+    det_preview_url = _preview_to_b64(det_preview)
+    mask_preview_url = _preview_to_b64(mask_preview)
+
+    n_detected = int(np.sum(binary_mask))
+    total_pixels = int(binary_mask.size)
+    detection_percentage = round(100 * n_detected / total_pixels, 2)
+
+    band_labels = list(band_labels_source)
+    if selected_bands:
+        band_labels = [band_labels[i] for i in selected_bands if i < len(band_labels)]
+
+    score_dist_chart = _create_local_score_chart(detection_map, threshold, req.algorithm)
+    spectrum_chart = _create_local_spectrum_chart(
+        result['target_spectrum'],
+        result['background_mean'],
+        result['background_std'],
+        band_labels,
+        req.algorithm,
+    )
+
+    return {
+        'detection_id': detection_id,
+        'algorithm': req.algorithm,
+        'threshold': float(threshold),
+        'min_val': min_val,
+        'max_val': max_val,
+        'detected_pixels': n_detected,
+        'total_pixels': total_pixels,
+        'detection_percentage': detection_percentage,
+        'target_spectrum': result['target_spectrum'],
+        'detection_result': {
+            'name': f'{req.algorithm} Detection Score',
+            'preview_url': det_preview_url,
+            'overlay_url': detection_overlay_url,
+            'type': 'detection_score',
+            'colormap': {
+                'name': 'jet',
+                'min_val': min_val,
+                'max_val': max_val,
+                'label': f'{req.algorithm} Score',
+            },
+        },
+        'mask_result': {
+            'name': f'{req.algorithm} Detection Mask (threshold: {threshold:.4f})',
+            'preview_url': mask_preview_url,
+            'overlay_url': mask_overlay_url,
+            'type': 'detection_mask',
+        },
+        'charts': {
+            'score_distribution': score_dist_chart,
+            'spectrum_comparison': spectrum_chart,
+        },
+        'used_bands': result['used_bands'],
+        'training_chart': _make_training_chart(result, req.algorithm),
+    }
+
+
 class LocalTDThresholdRequest(BaseModel):
     detection_id: str
     min_threshold: float
@@ -1212,6 +1524,14 @@ def local_apply_td_threshold(req: LocalTDThresholdRequest):
     from ..services.gpu_compute import rgba_to_base64_gpu
     mask_overlay_url = rgba_to_base64_gpu(mask_rgba)
     mask_preview = _make_preview_b64(mask_rgb, binary_mask)
+
+    # Persist the freshly computed binary mask so change-detection can
+    # use it without re-running threshold logic.
+    with _LOCAL_TD_CACHE_LOCK:
+        cached['binary_mask'] = binary_mask
+        cached['last_min_threshold'] = float(req.min_threshold)
+        cached['last_max_threshold'] = float(req.max_threshold)
+        _LOCAL_TD_CACHE[req.detection_id] = cached
 
     n_detected = int(np.sum(binary_mask))
     total_pixels = int(binary_mask.size)
@@ -1473,6 +1793,65 @@ def uploaded_gpu_stretch(req: UploadedGpuStretchRequest):
     }
 
 
+class UploadedGpuStretchSpec(BaseModel):
+    slot: str = Field(..., description="Caller-defined slot id (e.g. 'r', 'g', 'b')")
+    band_name: str = Field(..., description="Band name from meta['band_names']")
+    min_val: float = 0.0
+    max_val: float = 3000.0
+
+
+class UploadedGpuStretchMultiRequest(BaseModel):
+    upload_id: str
+    specs: List[UploadedGpuStretchSpec]
+
+
+@router.post("/uploaded/gpu-stretch-multi")
+def uploaded_gpu_stretch_multi(req: UploadedGpuStretchMultiRequest):
+    """Re-stretch arbitrary (band, range) tuples — one stretch per spec.
+
+    Used by the symbology UI to compute per-channel R/G/B grayscales when each
+    channel may want a different display range. Same band may appear twice with
+    different ranges (e.g. R uses Band 4 at [0,3000] while G also uses Band 4
+    at [200,2500]); the function stretches twice and returns slot-keyed URLs.
+    """
+    import time as _time
+    from ..services.gpu_compute import get_gpu_image, stretch_bands_gpu_multi
+
+    t0 = _time.time()
+
+    meta = _UPLOADED_IMAGE_META.get(req.upload_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    gpu_cache_key = f"uploaded/{req.upload_id}"
+    gpu_image = get_gpu_image(gpu_cache_key)
+    if gpu_image is None:
+        raise HTTPException(status_code=400, detail="Image not on GPU. Call /uploaded/gpu-load first.")
+
+    band_names = meta["band_names"]
+    name_to_idx = {name: i for i, name in enumerate(band_names)}
+
+    gpu_specs = []
+    for s in req.specs:
+        if s.band_name not in name_to_idx:
+            raise HTTPException(status_code=400, detail=f"Unknown band: {s.band_name}")
+        gpu_specs.append({
+            "key": s.slot,
+            "band_idx": name_to_idx[s.band_name],
+            "min_val": s.min_val,
+            "max_val": s.max_val,
+        })
+
+    slot_urls, w, h = stretch_bands_gpu_multi(gpu_image, gpu_specs)
+    print(f"UPLOADED GPU-STRETCH-MULTI ({len(gpu_specs)} specs) - Total: {_time.time()-t0:.2f}s")
+
+    return {
+        "slot_urls": slot_urls,
+        "width": w,
+        "height": h,
+    }
+
+
 # =============================================================================
 # Uploaded GeoTIFF: Spectral Index
 # =============================================================================
@@ -1641,7 +2020,14 @@ def uploaded_apply_threshold_range(req: UploadedThresholdRequest):
     if index_data is None:
         raise HTTPException(status_code=400, detail=f"No cached index data for {req.model_id}")
 
-    mask = (index_data >= req.min_threshold) & (index_data <= req.max_threshold)
+    if isinstance(index_data, dict):
+        index_array = index_data.get('index_data') or index_data.get('data')
+    else:
+        index_array = index_data
+    if index_array is None:
+        raise HTTPException(status_code=400, detail=f"No cached index data for {req.model_id}.")
+
+    mask = (index_array >= req.min_threshold) & (index_array <= req.max_threshold)
     h, w = mask.shape
 
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
@@ -1652,11 +2038,31 @@ def uploaded_apply_threshold_range(req: UploadedThresholdRequest):
     overlay_url = rgba_to_base64_gpu(rgba)
     preview_url = _make_preview_b64(rgba[:, :, :3], mask)
 
+    # Register an id-keyed entry alongside the path-keyed one so
+    # change-detection can look it up by id.
+    analysis_id = f"uploaded-sa-{int(time.time() * 1000)}"
+    with _LOCAL_INDEX_CACHE_LOCK:
+        _LOCAL_INDEX_CACHE[analysis_id] = {
+            'index_data': index_array,
+            'binary_mask': mask,
+            'last_min_threshold': float(req.min_threshold),
+            'last_max_threshold': float(req.max_threshold),
+            'model_id': req.model_id,
+            'upload_id': req.upload_id,
+        }
+
+    n_detected = int(mask.sum())
+    total_pixels = int(mask.size)
+    detection_percentage = round(100.0 * n_detected / total_pixels, 2) if total_pixels else 0.0
+
     return {
+        'analysis_id': analysis_id,
         'overlay_url': overlay_url,
         'preview_url': preview_url,
         'min_threshold': req.min_threshold,
         'max_threshold': req.max_threshold,
+        'detected_pixels': n_detected,
+        'detection_percentage': detection_percentage,
     }
 
 
@@ -1745,6 +2151,8 @@ def uploaded_run_target_detection(req: UploadedTargetDetectionRequest):
     mask_overlay_url = rgba_to_base64_gpu(mask_rgba)
 
     with _LOCAL_TD_CACHE_LOCK:
+        # Initial run does NOT publish a binary_mask. Change-detection
+        # requires the user to explicitly apply a threshold first.
         _LOCAL_TD_CACHE[detection_id] = {
             'detection_map': detection_map,
             'algorithm': req.algorithm,
@@ -1818,6 +2226,127 @@ def _make_training_chart(result, algorithm):
     return f"data:image/png;base64,{chart_b64}" if chart_b64 else None
 
 
+@router.post("/uploaded/target-detection/run-stream")
+async def uploaded_run_target_detection_stream(req: UploadedTargetDetectionRequest):
+    """
+    SSE streaming variant of `/api/local/uploaded/target-detection/run`.
+    Emits `training` events for each MLP training step so the loss curve
+    animates live in the frontend, followed by a single `done` event with
+    the full response. Non-MLP algorithms short-circuit to `done`.
+    """
+    from ..services.gpu_compute import (
+        get_gpu_image, load_image_to_gpu, detect_from_gpu_tensor,
+    )
+    from ..services.target_detection import _run_mlp_detection, ImageDataLoader
+
+    algo_upper = req.algorithm.upper()
+    is_mlp = algo_upper in ('MLP_AMF', 'MLP_ACE')
+
+    meta = _UPLOADED_IMAGE_META.get(req.upload_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    gpu_cache_key = f"uploaded/{req.upload_id}"
+    gpu_image = get_gpu_image(gpu_cache_key)
+    if gpu_image is None:
+        band_arrays = [_read_uploaded_band(req.upload_id, i + 1) for i in range(meta["band_count"])]
+        gpu_image = load_image_to_gpu(gpu_cache_key, band_arrays)
+
+    h, w, n_bands = gpu_image.shape
+
+    mlp_loader = None
+    mlp_target_pixels = None
+    mlp_neg_pixels = None
+    if is_mlp:
+        cube = gpu_image.cpu().numpy()
+        if req.selected_bands and len(req.selected_bands) > 0:
+            cube = cube[:, :, req.selected_bands]
+        mlp_loader = ImageDataLoader.__new__(ImageDataLoader)
+        mlp_loader.data = cube
+        mlp_loader.transform = None
+        mlp_loader.crs = None
+        mlp_loader.raster_path = None
+        mlp_target_pixels = [
+            (int(p.get('col', p.get('lng', 0))), int(p.get('row', p.get('lat', 0))))
+            for p in req.target_points
+        ]
+        mlp_neg_pixels = [
+            (int(p.get('col', p.get('lng', 0))), int(p.get('row', p.get('lat', 0))))
+            for p in (req.negative_points or [])
+        ]
+
+    def event_generator():
+        progress_queue = queue.Queue() if is_mlp else None
+
+        def on_progress(data):
+            if progress_queue is not None:
+                progress_queue.put(data)
+
+        result_holder = [None]
+        error_holder = [None]
+
+        def run_in_thread():
+            try:
+                if is_mlp:
+                    result_holder[0] = _run_mlp_detection(
+                        mlp_loader, mlp_target_pixels, mlp_neg_pixels,
+                        algo_upper, req.selected_bands,
+                        progress_callback=on_progress,
+                    )
+                else:
+                    result_holder[0] = detect_from_gpu_tensor(
+                        gpu_image, req.target_points, req.algorithm,
+                        selected_bands=req.selected_bands,
+                    )
+            except Exception as e:
+                error_holder[0] = e
+            finally:
+                if progress_queue is not None:
+                    progress_queue.put(None)
+
+        t = threading.Thread(target=run_in_thread, daemon=True)
+        t.start()
+
+        if is_mlp and progress_queue is not None:
+            while True:
+                try:
+                    data = progress_queue.get(timeout=60)
+                except queue.Empty:
+                    break
+                if data is None:
+                    break
+                evt = {
+                    "step": data.get("step", 0),
+                    "n_steps": data.get("n_steps", 100),
+                    "loss": data["loss_history"][-1] if data.get("loss_history") else None,
+                    "loss_history": data.get("loss_history", []),
+                }
+                yield f"event: training\ndata: {json.dumps(evt)}\n\n"
+
+        t.join(timeout=600)
+
+        if error_holder[0]:
+            yield f"event: error\ndata: {json.dumps({'detail': str(error_holder[0])})}\n\n"
+            return
+        result = result_holder[0]
+        if result is None:
+            yield f"event: error\ndata: {json.dumps({'detail': 'Detection returned no result'})}\n\n"
+            return
+
+        try:
+            final = _build_local_td_response(
+                req, result, (h, w),
+                band_labels_source=meta.get("band_names", []),
+                selected_bands=req.selected_bands,
+            )
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
+            return
+        yield f"event: done\ndata: {json.dumps(final, default=str)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 # =============================================================================
 # Uploaded GeoTIFF: Pixel value inspection
 # =============================================================================
@@ -1870,130 +2399,132 @@ def uploaded_get_index_value(req: UploadedIndexValueRequest):
 
 
 # =============================================================================
-# Uploaded GeoTIFF: SAM2 Segmentation
+# Uploaded GeoTIFF: SAM3 Segmentation (point + text modes)
 # =============================================================================
 
-from .schemas import UploadedSAM2PredictRequest
+from .schemas import UploadedSAM3PointPredictRequest, UploadedSAM3TextPredictRequest
 
 
-@router.post("/uploaded/sam2/predict")
-def uploaded_sam2_predict(req: UploadedSAM2PredictRequest):
-    """Run SAM2 segmentation on uploaded GeoTIFF with pixel-coordinate prompts."""
-    from ..services.sam2_service import (
-        is_sam2_ready, init_sam2, get_sam2_status,
+def _read_uploaded_rgb_uint8(meta: dict, rgb_bands):
+    """Read & percentile-stretch the uploaded GeoTIFF's RGB bands to uint8."""
+    filepath = meta["filepath"]
+    h, w = meta["height"], meta["width"]
+    n_bands = meta["band_count"]
+
+    if rgb_bands and len(rgb_bands) >= 3:
+        r_idx, g_idx, b_idx = rgb_bands[0], rgb_bands[1], rgb_bands[2]
+    elif n_bands >= 3:
+        r_idx, g_idx, b_idx = 3, 2, 1
+    else:
+        r_idx = g_idx = b_idx = 1
+
+    with rasterio.open(filepath) as src:
+        red = src.read(r_idx).astype(np.float32)
+        green = src.read(g_idx).astype(np.float32)
+        blue = src.read(b_idx).astype(np.float32)
+
+    rgb = np.stack([red, green, blue], axis=-1)
+    valid = rgb[np.isfinite(rgb) & (rgb > 0)]
+    if len(valid) > 0:
+        p2 = np.percentile(valid, 2)
+        p98 = np.percentile(valid, 98)
+        if p98 > p2:
+            rgb = (rgb - p2) / (p98 - p2)
+        else:
+            rgb = rgb / (rgb.max() + 1e-8)
+    else:
+        rgb = rgb / (rgb.max() + 1e-8)
+    rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
+    return rgb, h, w, n_bands
+
+
+def _maybe_downscale_for_sam3(rgb: np.ndarray, h: int, w: int):
+    """SAM3 max-edge clamp at 2048 px to control memory."""
+    MAX_DIM = 2048
+    if max(h, w) <= MAX_DIM:
+        return rgb, 1.0
+    scale = MAX_DIM / max(h, w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    from PIL import Image as PILImage
+    img = PILImage.fromarray(rgb).resize((new_w, new_h), PILImage.LANCZOS)
+    print(f"SAM3 UPLOADED - resized {h}x{w} -> {new_h}x{new_w} (scale={scale:.3f})")
+    return np.array(img), scale
+
+
+def _upscale_mask_to_original(mask: np.ndarray, scale_factor: float, w: int, h: int) -> np.ndarray:
+    if scale_factor >= 1.0:
+        return mask.astype(bool)
+    from PIL import Image as PILImage
+    mask_pil = PILImage.fromarray(mask.astype(np.uint8) * 255, mode="L")
+    mask_pil = mask_pil.resize((w, h), PILImage.NEAREST)
+    return np.array(mask_pil) > 127
+
+
+@router.post("/uploaded/sam3/predict")
+def uploaded_sam3_predict(req: UploadedSAM3PointPredictRequest):
+    """SAM3 single-instance segmentation on an uploaded GeoTIFF (point/box mode)."""
+    from ..services.sam3_service import (
+        is_sam3_ready, init_sam3, get_sam3_status,
         encode_image, predict_mask,
     )
-    from ..services.gpu_compute import rgb_mask_to_base64_gpu
-    from .routes_sam2 import SAM2_MASK_CACHE, SAM2_MASK_CACHE_LOCK
+    from .routes_sam3 import (
+        SAM3_MASK_CACHE, SAM3_MASK_CACHE_LOCK, make_mask_overlay_native,
+    )
 
-    if not is_sam2_ready():
-        if not init_sam2():
-            raise HTTPException(
-                status_code=503,
-                detail=f"SAM2 model not available: {get_sam2_status().get('error', 'Unknown')}"
-            )
+    if not is_sam3_ready() and not init_sam3():
+        raise HTTPException(
+            status_code=503,
+            detail=f"SAM3 model not available: {get_sam3_status().get('error', 'Unknown')}",
+        )
 
     meta = _UPLOADED_IMAGE_META.get(req.upload_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Upload not found")
 
-    filepath = meta["filepath"]
-    h, w = meta["height"], meta["width"]
-    n_bands = meta["band_count"]
-
     try:
-        # Determine RGB band indices (1-based)
-        if req.rgb_bands and len(req.rgb_bands) >= 3:
-            r_idx, g_idx, b_idx = req.rgb_bands[0], req.rgb_bands[1], req.rgb_bands[2]
-        elif n_bands >= 3:
-            r_idx, g_idx, b_idx = 3, 2, 1  # Default: band 3=R, 2=G, 1=B
-        else:
-            r_idx = g_idx = b_idx = 1  # Grayscale fallback
+        rgb, h, w, _ = _read_uploaded_rgb_uint8(meta, req.rgb_bands)
+        rgb, scale_factor = _maybe_downscale_for_sam3(rgb, h, w)
 
-        # Read RGB bands
-        with rasterio.open(filepath) as src:
-            red = src.read(r_idx).astype(np.float32)
-            green = src.read(g_idx).astype(np.float32)
-            blue = src.read(b_idx).astype(np.float32)
-
-        rgb = np.stack([red, green, blue], axis=-1)
-
-        # Percentile stretch to uint8
-        valid = rgb[np.isfinite(rgb) & (rgb > 0)]
-        if len(valid) > 0:
-            p2 = np.percentile(valid, 2)
-            p98 = np.percentile(valid, 98)
-            if p98 > p2:
-                rgb = (rgb - p2) / (p98 - p2)
-            else:
-                rgb = rgb / (rgb.max() + 1e-8)
-        else:
-            rgb = rgb / (rgb.max() + 1e-8)
-        rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
-
-        # Resize large images for SAM2 (max 2048px on longest side)
-        MAX_SAM2_DIM = 2048
-        scale_factor = 1.0
-        if max(h, w) > MAX_SAM2_DIM:
-            scale_factor = MAX_SAM2_DIM / max(h, w)
-            new_h, new_w = int(h * scale_factor), int(w * scale_factor)
-            from PIL import Image as PILImage
-            rgb_pil = PILImage.fromarray(rgb)
-            rgb_pil = rgb_pil.resize((new_w, new_h), PILImage.LANCZOS)
-            rgb = np.array(rgb_pil)
-            print(f"SAM2 UPLOADED - Resized from {h}x{w} to {new_h}x{new_w} (scale={scale_factor:.3f})")
-
-        # Encode image for SAM2
         cache_key = f"uploaded/{req.upload_id}"
         encode_image(cache_key, rgb)
 
-        # Convert pixel points to SAM2 format: (col, row) = (x, y)
-        # Scale points if image was resized
-        positive_pixels = [(int(p.col * scale_factor), int(p.row * scale_factor)) for p in req.positive_points]
-        negative_pixels = [(int(p.col * scale_factor), int(p.row * scale_factor)) for p in req.negative_points] if req.negative_points else None
+        # SAM3 (like SAM2) takes (x, y) = (col, row).
+        positive_pixels = [
+            (int(p.col * scale_factor), int(p.row * scale_factor))
+            for p in req.positive_points
+        ]
+        negative_pixels = (
+            [
+                (int(p.col * scale_factor), int(p.row * scale_factor))
+                for p in req.negative_points
+            ]
+            if req.negative_points else None
+        )
 
-        print(f"SAM2 UPLOADED - Positive pixels: {positive_pixels}")
-        print(f"SAM2 UPLOADED - Negative pixels: {negative_pixels}")
+        print(f"SAM3 UPLOADED - positive: {positive_pixels}")
+        print(f"SAM3 UPLOADED - negative: {negative_pixels}")
 
-        # Predict mask
         mask, score = predict_mask(cache_key, positive_pixels, negative_pixels)
-        mask = mask.astype(bool)
+        mask = _upscale_mask_to_original(mask, scale_factor, w, h)
 
-        # Upscale mask back to original image size if resized
-        if scale_factor < 1.0:
-            from PIL import Image as PILImage
-            mask_pil = PILImage.fromarray(mask.astype(np.uint8) * 255, mode='L')
-            mask_pil = mask_pil.resize((w, h), PILImage.NEAREST)
-            mask = np.array(mask_pil) > 127
+        overlay_url, preview_url = make_mask_overlay_native(mask)
 
-        # Create overlay using same format as satellite mode
-        mask_rgb = np.zeros((*mask.shape, 3), dtype=np.uint8)
-        mask_rgb[mask, 0] = 255  # Red (magenta)
-        mask_rgb[mask, 2] = 200  # Blue (magenta)
-
-        overlay_url = rgb_mask_to_base64_gpu(mask_rgb, mask)
-
-        # Preview thumbnail
-        mask_rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
-        mask_rgba[:, :, :3] = mask_rgb
-        mask_rgba[mask, 3] = 200
-        preview_img = Image.fromarray(mask_rgba, mode='RGBA')
-        preview_img.thumbnail((256, 256), Image.LANCZOS)
-        preview_buf = pyio.BytesIO()
-        preview_img.save(preview_buf, format='PNG')
-        preview_url = f"data:image/png;base64,{base64.b64encode(preview_buf.getvalue()).decode('utf-8')}"
-
-        # Cache mask
-        mask_id = f"sam2-uploaded-{int(time.time() * 1000)}"
-        with SAM2_MASK_CACHE_LOCK:
-            SAM2_MASK_CACHE[mask_id] = {
+        mask_id = f"sam3-uploaded-{int(time.time() * 1000)}"
+        with SAM3_MASK_CACHE_LOCK:
+            SAM3_MASK_CACHE[mask_id] = {
                 "mask": mask,
+                "binary_mask": mask,  # alias used by change-detection lookup
                 "upload_id": req.upload_id,
                 "overlay_url": overlay_url,
                 "preview_url": preview_url,
                 "score": score,
                 "pixel_count": int(mask.sum()),
                 "saved": False,
+                "mode": "point",
+                # No transform/crs for uploaded images — change-detection
+                # treats this as local-mode (pixel-aligned).
+                "transform": None,
+                "crs": None,
             }
 
         return {
@@ -2003,16 +2534,108 @@ def uploaded_sam2_predict(req: UploadedSAM2PredictRequest):
             "preview_url": preview_url,
             "pixel_count": int(mask.sum()),
             "total_pixels": int(mask.size),
-            "overlay_meta": {
-                "width": w,
-                "height": h,
-            },
+            "overlay_meta": {"width": w, "height": h},
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"SAM2 uploaded predict error: {e}")
+        print(f"SAM3 uploaded predict error: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"SAM2 prediction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"SAM3 prediction failed: {e}")
+
+
+@router.post("/uploaded/sam3/text-predict")
+def uploaded_sam3_text_predict(req: UploadedSAM3TextPredictRequest):
+    """SAM3 PCS on an uploaded GeoTIFF — every instance matching the text prompt."""
+    from ..services.sam3_service import (
+        is_sam3_ready, init_sam3, get_sam3_status,
+        encode_image, predict_text,
+    )
+    from .routes_sam3 import (
+        SAM3_MASK_CACHE, SAM3_MASK_CACHE_LOCK,
+        make_mask_overlay_native, instance_color, rgb_to_hex,
+    )
+
+    if not is_sam3_ready() and not init_sam3():
+        raise HTTPException(
+            status_code=503,
+            detail=f"SAM3 model not available: {get_sam3_status().get('error', 'Unknown')}",
+        )
+
+    meta = _UPLOADED_IMAGE_META.get(req.upload_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    if not req.prompt or not req.prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt must be non-empty")
+
+    try:
+        rgb, h, w, _ = _read_uploaded_rgb_uint8(meta, req.rgb_bands)
+        rgb, scale_factor = _maybe_downscale_for_sam3(rgb, h, w)
+
+        cache_key = f"uploaded/{req.upload_id}"
+        encode_image(cache_key, rgb)
+
+        masks, scores, boxes = predict_text(
+            cache_key, req.prompt, score_threshold=req.score_threshold or 0.5,
+        )
+
+        ts = int(time.time() * 1000)
+        n = len(masks)
+        total_for_color = max(n, 8)
+
+        instances = []
+        for i, (m, sc, bx) in enumerate(zip(masks, scores, boxes)):
+            full_mask = _upscale_mask_to_original(m, scale_factor, w, h)
+            color = instance_color(i, total_for_color)
+            overlay_url, preview_url = make_mask_overlay_native(
+                full_mask, rgb_color=color
+            )
+            mask_id = f"sam3-uploaded-text-{ts}-{i}"
+            with SAM3_MASK_CACHE_LOCK:
+                SAM3_MASK_CACHE[mask_id] = {
+                    "mask": full_mask,
+                    "binary_mask": full_mask,
+                    "upload_id": req.upload_id,
+                    "overlay_url": overlay_url,
+                    "preview_url": preview_url,
+                    "score": sc,
+                    "pixel_count": int(full_mask.sum()),
+                    "saved": False,
+                    "mode": "text",
+                    "prompt": req.prompt,
+                    "color": color,
+                    "transform": None,
+                    "crs": None,
+                }
+            # Box was returned in (possibly downscaled) prediction space.
+            if scale_factor < 1.0:
+                bx = tuple(v / scale_factor for v in bx)
+            instances.append({
+                "mask_id": mask_id,
+                "score": float(sc),
+                "overlay_url": overlay_url,
+                "preview_url": preview_url,
+                "pixel_count": int(full_mask.sum()),
+                "color_hex": rgb_to_hex(color),
+                "bbox_pixel": list(bx),
+                "overlay_meta": {"width": w, "height": h},
+            })
+
+        return {
+            "prompt": req.prompt,
+            "instance_count": len(instances),
+            "instances": instances,
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"SAM3 uploaded text-predict error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"SAM3 text prediction failed: {e}")

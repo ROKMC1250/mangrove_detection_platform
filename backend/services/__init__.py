@@ -8,16 +8,13 @@ from .earth_engine import (
     resolve_item_to_image,
     get_s2_collection,
     get_s1_collection,
-    get_emit_collection,
-    resolve_emit_image,
-    get_emit_band_metadata,
     get_visualization_params,
     get_s1_visualization_params,
+    compute_band_stretch_stats,
     compute_aoi_overlap_ratio,
     calculate_aoi_cloud_coverage,
     build_feature_collection_simple,
     build_feature_collection_simple_s1,
-    build_feature_collection_simple_emit,
     create_best_image_composite,
 )
 

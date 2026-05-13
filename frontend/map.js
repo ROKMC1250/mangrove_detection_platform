@@ -154,8 +154,12 @@ class MapManager {
         return this.layers.toggleProcessedImages();
     }
 
-    showAnalysisLayer(modelId, imageUrl, modelName, boundsOverride = null) {
-        this.layers.showAnalysisLayer(modelId, imageUrl, modelName, boundsOverride);
+    showAnalysisLayer(modelId, imageUrl, modelName, boundsOverride = null, isBinary = false) {
+        return this.layers.showAnalysisLayer(modelId, imageUrl, modelName, boundsOverride, isBinary);
+    }
+
+    showAnalysisLayerAsync(modelId, imageUrl, modelName, boundsOverride = null, timeoutMs, isBinary = false) {
+        return this.layers.showAnalysisLayerAsync(modelId, imageUrl, modelName, boundsOverride, timeoutMs, isBinary);
     }
 
     hideAnalysisLayer(modelId) {
@@ -168,6 +172,14 @@ class MapManager {
 
     hideTileLayer(layerId) {
         this.layers.hideTileLayer(layerId);
+    }
+
+    applyRenderingFilter(tileLayer, state, prefix) {
+        this.layers.applyRenderingFilter(tileLayer, state, prefix);
+    }
+
+    reapplyRenderingFilter(tileLayer) {
+        this.layers.reapplyRenderingFilter(tileLayer);
     }
 
     // COG methods

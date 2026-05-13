@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 import io as pyio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from .schemas import MangroveSegmentationRequest, MangroveSegmentationThresholdRequest
 from ..core.config import OUTPUTS_DIR
@@ -39,8 +39,12 @@ from ..utils.cache import (
 
 router = APIRouter(prefix="/api", tags=["mangrove-segmentation"])
 
-# Cache for probability maps (keyed by segmentation_id)
-MANGROVE_SEG_CACHE = {}
+
+# Cache for probability maps (keyed by segmentation_id).
+# Bounded + TTL so long-running servers do not accumulate prob maps (each
+# is a full-resolution float array) indefinitely.
+from ..utils.cache_service import TTLCache
+MANGROVE_SEG_CACHE = TTLCache(maxsize=32, ttl=2 * 3600, name="mangrove_seg")
 MANGROVE_SEG_CACHE_LOCK = threading.Lock()
 
 
@@ -50,125 +54,115 @@ def get_segmentation_status():
     return get_model1_status()
 
 
-@router.post("/mangrove-segmentation/run")
-def run_segmentation(req: MangroveSegmentationRequest):
-    """
-    Run mangrove segmentation on a processed image.
-    Returns probability map overlay (colormapped) with min/max values for threshold control.
-    """
-    try:
-        print(f"MANGROVE SEG - Running on {req.image_id}")
+def _execute_segmentation_job(req: MangroveSegmentationRequest, cached_raster_path: str) -> dict:
+    """Run the full segmentation pipeline."""
+    print(f"MANGROVE SEG - Using raster: {cached_raster_path}")
 
-        # Check model readiness
-        if not is_model1_ready():
-            if not init_model1():
-                status = get_model1_status()
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Segmentation model not available: {status.get('error', 'Unknown error')}"
-                )
+    result = run_model1_inference(
+        image_path=cached_raster_path,
+        bbox=req.bbox,
+        image_id=req.image_id,
+        geometry=req.geometry,
+        use_tta=req.use_tta,
+    )
 
-        # Get cached raster path
-        cache_key = bbox_to_cache_key(req.image_id, req.bbox)
-        with RASTER_CACHE_LOCK:
-            cached_raster_path = RASTER_FILE_CACHE.get(cache_key)
+    if result is None:
+        raise RuntimeError("Segmentation failed. Check server logs for details.")
 
-        if not cached_raster_path or not os.path.exists(cached_raster_path):
-            raise HTTPException(
-                status_code=400,
-                detail="Image not processed yet. Please process the image first."
-            )
+    prob_map = result['prob_map']
+    min_val = result['min_val']
+    max_val = result['max_val']
 
-        print(f"MANGROVE SEG - Using raster: {cached_raster_path}")
+    from ..services.gpu_compute import rgb_mask_to_base64_gpu
 
-        # Run inference — returns probability map
-        result = run_model1_inference(
-            image_path=cached_raster_path,
-            bbox=req.bbox,
-            image_id=req.image_id,
-            geometry=req.geometry,
-            use_tta=req.use_tta,
-        )
+    prob_rgb, _actual_min, _actual_max = create_index_visualization(
+        prob_map, cmap='jet', vmin=min_val, vmax=max_val
+    )
 
-        if result is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Segmentation failed. Check server logs for details."
-            )
+    min_lon, min_lat, max_lon, max_lat = req.bbox
+    finite_mask = np.isfinite(prob_map)
 
-        prob_map = result['prob_map']
-        min_val = result['min_val']
-        max_val = result['max_val']
+    aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
+        prob_rgb, finite_mask,
+        result['transform'], result['crs'],
+        (min_lon, min_lat, max_lon, max_lat),
+        scale_m=10, geometry=req.geometry
+    )
 
-        # Create colormapped visualization of probability map
-        from ..services.gpu_compute import rgb_mask_to_base64_gpu
+    overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
 
-        prob_rgb, actual_min, actual_max = create_index_visualization(
-            prob_map, cmap='jet', vmin=min_val, vmax=max_val
-        )
+    preview_img = Image.fromarray(prob_rgb, mode='RGB')
+    preview_img.thumbnail((256, 256), Image.LANCZOS)
+    preview_buf = pyio.BytesIO()
+    preview_img.save(preview_buf, format='PNG')
+    preview_b64 = f"data:image/png;base64,{base64.b64encode(preview_buf.getvalue()).decode('utf-8')}"
 
-        # Warp to AOI
-        min_lon, min_lat, max_lon, max_lat = req.bbox
-        finite_mask = np.isfinite(prob_map)
-
-        aoi_rgb, aoi_mask, (aoi_w, aoi_h), _ = warp_rgb_and_mask_to_aoi(
-            prob_rgb, finite_mask,
-            result['transform'], result['crs'],
-            (min_lon, min_lat, max_lon, max_lat),
-            scale_m=10, geometry=req.geometry
-        )
-
-        overlay_url = rgb_mask_to_base64_gpu(aoi_rgb, aoi_mask)
-
-        # Preview thumbnail
-        preview_img = Image.fromarray(prob_rgb, mode='RGB')
-        preview_img.thumbnail((256, 256), Image.LANCZOS)
-        preview_buf = pyio.BytesIO()
-        preview_img.save(preview_buf, format='PNG')
-        preview_b64 = f"data:image/png;base64,{base64.b64encode(preview_buf.getvalue()).decode('utf-8')}"
-
-        # Cache probability map for threshold re-application
-        segmentation_id = f"mangrove-seg-{int(time.time() * 1000)}"
-        with MANGROVE_SEG_CACHE_LOCK:
-            MANGROVE_SEG_CACHE[segmentation_id] = {
-                'prob_map': prob_map,
-                'transform': result['transform'],
-                'crs': result['crs'],
-                'bbox': req.bbox,
-                'geometry': req.geometry,
-                'min_val': min_val,
-                'max_val': max_val,
-            }
-
-        response = {
-            'segmentation_id': segmentation_id,
-            'name': 'Mangrove Segmentation',
+    segmentation_id = f"mangrove-seg-{int(time.time() * 1000)}"
+    with MANGROVE_SEG_CACHE_LOCK:
+        MANGROVE_SEG_CACHE[segmentation_id] = {
+            'prob_map': prob_map,
+            'transform': result['transform'],
+            'crs': result['crs'],
+            'bbox': req.bbox,
+            'geometry': req.geometry,
             'min_val': min_val,
             'max_val': max_val,
-            'preview_url': preview_b64,
-            'overlay_url': overlay_url,
-            'colormap': {
-                'name': 'jet',
-                'min_val': min_val,
-                'max_val': max_val,
-                'label': 'Mangrove Probability',
-            },
-            'overlay_meta': {
-                'width': int(aoi_w),
-                'height': int(aoi_h),
-                'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
-            },
         }
 
-        print(f"MANGROVE SEG - Complete. ID: {segmentation_id}, prob range: [{min_val:.4f}, {max_val:.4f}]")
-        return response
+    response = {
+        'segmentation_id': segmentation_id,
+        'name': 'Mangrove Segmentation',
+        'min_val': min_val,
+        'max_val': max_val,
+        'preview_url': preview_b64,
+        'overlay_url': overlay_url,
+        'colormap': {
+            'name': 'jet',
+            'min_val': min_val,
+            'max_val': max_val,
+            'label': 'Mangrove Probability',
+        },
+        'overlay_meta': {
+            'width': int(aoi_w),
+            'height': int(aoi_h),
+            'bounds': [float(min_lat), float(min_lon), float(max_lat), float(max_lon)]
+        },
+    }
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"MANGROVE SEG - Error: {e}")
-        import traceback
-        traceback.print_exc()
+    print(f"MANGROVE SEG - Complete. ID: {segmentation_id}, prob range: [{min_val:.4f}, {max_val:.4f}]")
+    return response
+
+
+@router.post("/mangrove-segmentation/run")
+def run_segmentation(req: MangroveSegmentationRequest, request: Request):
+    """Run mangrove segmentation synchronously and return the result.
+
+    Concurrency is handled by the session gate (only one active user), so no
+    request-level queue is needed here.
+    """
+    print(f"MANGROVE SEG - Running on {req.image_id}")
+
+    if not is_model1_ready():
+        if not init_model1():
+            status = get_model1_status()
+            raise HTTPException(
+                status_code=503,
+                detail=f"Segmentation model not available: {status.get('error', 'Unknown error')}"
+            )
+
+    cache_key = bbox_to_cache_key(req.image_id, req.bbox)
+    with RASTER_CACHE_LOCK:
+        cached_raster_path = RASTER_FILE_CACHE.get(cache_key)
+
+    if not cached_raster_path or not os.path.exists(cached_raster_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Image not processed yet. Please process the image first."
+        )
+
+    try:
+        return _execute_segmentation_job(req, cached_raster_path)
+    except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -224,6 +218,14 @@ def apply_segmentation_threshold(req: MangroveSegmentationThresholdRequest):
         mask_buf = pyio.BytesIO()
         mask_preview.save(mask_buf, format='PNG')
         mask_preview_b64 = f"data:image/png;base64,{base64.b64encode(mask_buf.getvalue()).decode('utf-8')}"
+
+        # Persist the freshly computed binary mask so change-detection can
+        # use it without re-running threshold logic.
+        with MANGROVE_SEG_CACHE_LOCK:
+            cached['binary_mask'] = binary_mask
+            cached['last_min_threshold'] = float(req.min_threshold)
+            cached['last_max_threshold'] = float(req.max_threshold)
+            MANGROVE_SEG_CACHE[req.segmentation_id] = cached
 
         # Statistics
         n_detected = int(np.sum(binary_mask))

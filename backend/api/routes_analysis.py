@@ -23,7 +23,7 @@ from .schemas import (
     ThresholdRangeRequest,
     ComputeSpectralIndexRequest,
 )
-from ..core.config import PROJECT_ROOT, OUTPUTS_DIR
+from ..core.config import PROJECT_ROOT, OUTPUTS_DIR, S2_BAND_MAPPING
 from ..services.earth_engine import bbox_to_geometry
 from ..services.visualization import (
     stretch_uint8,
@@ -83,26 +83,12 @@ def _create_rgb_composite(custom_viz: Dict, image_id: str, bbox: List[float]) ->
     print(f"RGB COMPOSITE - Using cached raster: {cached_raster_path}")
     
     with rasterio.open(cached_raster_path) as src:
-        # Band mapping for 10 bands: B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12
-        band_mapping = {'B2': 1, 'B3': 2, 'B4': 3, 'B5': 4, 'B6': 5, 'B7': 6, 'B8': 7, 'B8A': 8, 'B11': 9, 'B12': 10}
-        
-        if len(converted_bands) >= 3:
-            try:
-                r_idx = band_mapping.get(converted_bands[0], 1)
-                g_idx = band_mapping.get(converted_bands[1], 2)
-                b_idx = band_mapping.get(converted_bands[2], 3)
-                r_band = src.read(r_idx)
-                g_band = src.read(g_idx)
-                b_band = src.read(b_idx)
-            except Exception:
-                r_band = src.read(1)
-                g_band = src.read(2) if src.count >= 2 else src.read(1)
-                b_band = src.read(3) if src.count >= 3 else src.read(1)
-        else:
-            r_band = src.read(1)
-            g_band = src.read(1) if len(converted_bands) < 2 else src.read(2)
-            b_band = src.read(1) if len(converted_bands) < 3 else src.read(3)
-        
+        r_idx = S2_BAND_MAPPING[converted_bands[0]]
+        g_idx = S2_BAND_MAPPING[converted_bands[1]]
+        b_idx = S2_BAND_MAPPING[converted_bands[2]]
+        r_band = src.read(r_idx)
+        g_band = src.read(g_idx)
+        b_band = src.read(b_idx)
         src_transform = src.transform
         src_crs = src.crs
     
@@ -157,18 +143,10 @@ def _create_index_visualization(custom_viz: Dict, image_id: str, bbox: List[floa
         raise HTTPException(status_code=400, detail="No cached raster data found. Please process the image first.")
     
     with rasterio.open(cached_raster_path) as src:
-        # Band mapping for 10 bands: B2, B3, B4, B5, B6, B7, B8, B8A, B11, B12
-        band_mapping = {'B2': 1, 'B3': 2, 'B4': 3, 'B5': 4, 'B6': 5, 'B7': 6, 'B8': 7, 'B8A': 8, 'B11': 9, 'B12': 10}
-        
-        try:
-            a_idx = band_mapping.get(converted_band_a, 1)
-            b_idx = band_mapping.get(converted_band_b, 2)
-            a_data = src.read(a_idx).astype(np.float32)
-            b_data = src.read(b_idx).astype(np.float32)
-        except Exception:
-            a_data = src.read(1).astype(np.float32)
-            b_data = src.read(2).astype(np.float32)
-        
+        a_idx = S2_BAND_MAPPING[converted_band_a]
+        b_idx = S2_BAND_MAPPING[converted_band_b]
+        a_data = src.read(a_idx).astype(np.float32)
+        b_data = src.read(b_idx).astype(np.float32)
         src_transform = src.transform
         src_crs = src.crs
         
@@ -340,20 +318,12 @@ def compute_spectral_index(req: ComputeSpectralIndexRequest):
             src_crs = src.crs
             n_bands = src.count
 
-        # Build band dict from raster (band order: B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12 for 10-band)
-        # Or B1,B2,...,B12,mask for 13-band from process-image
-        band_names_10 = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
-        band_names_13 = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12', 'mask']
-
-        if n_bands >= 13:
-            band_dict = {name: data[i] for i, name in enumerate(band_names_13) if name != 'mask'}
-            mask_band = data[12]
-            mask_bool = mask_band > 0
-        elif n_bands >= 10:
-            band_dict = {name: data[i] for i, name in enumerate(band_names_10)}
-            mask_bool = np.ones(data.shape[1:], dtype=bool)
-        else:
+        # Raster band order (12 bands): B1,B2,B3,B4,B5,B6,B7,B8,B8A,B9,B11,B12
+        band_names = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
+        if n_bands != len(band_names):
             raise HTTPException(status_code=400, detail=f"Unexpected band count: {n_bands}")
+        band_dict = {name: data[i] for i, name in enumerate(band_names)}
+        mask_bool = np.ones(data.shape[1:], dtype=bool)
 
         # Apply mask
         def apply_mask(arr):
@@ -599,13 +569,31 @@ def apply_threshold_range(req: ThresholdRangeRequest):
         preview_rgba[:, :, 3] = 255
         preview_rgba[~mask, 3] = 0
         preview_url = rgba_to_base64_gpu(preview_rgba, max_dim=256)
-        
+
+        # Persist the binary mask under the same INDEX_DATA_CACHE entry so
+        # change-detection can look it up by `analysis_id` (= cache_key).
+        with INDEX_CACHE_LOCK:
+            cached_data['binary_mask'] = mask
+            cached_data['last_min_threshold'] = float(req.min_threshold)
+            cached_data['last_max_threshold'] = float(req.max_threshold)
+            INDEX_DATA_CACHE[cache_key] = cached_data
+
+        # Mirror the target-detection contract: report how many source pixels
+        # met the threshold so the SA result card can display "X px / Y%"
+        # like TD does.
+        n_detected = int(mask.sum())
+        total_pixels = int(mask.size)
+        detection_percentage = round(100.0 * n_detected / total_pixels, 2) if total_pixels else 0.0
+
         return {
+            'analysis_id': cache_key,
             'name': f'{req.colormap.get("label", "Index")} (Range: {req.min_threshold:.3f}-{req.max_threshold:.3f})',
             'preview_url': preview_url,
             'overlay_url': overlay_url,
             'min_threshold': req.min_threshold,
             'max_threshold': req.max_threshold,
+            'detected_pixels': n_detected,
+            'detection_percentage': detection_percentage,
             'type': 'threshold_range',
             'overlay_meta': {
                 'width': int(aoi_w),

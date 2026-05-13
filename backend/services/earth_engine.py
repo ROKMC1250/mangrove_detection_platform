@@ -14,8 +14,6 @@ from ..core.config import (
     SERVICE_ACCOUNT_KEY_PATH,
     GCS_BUCKET,
     validate_service_account,
-    EMIT_COLLECTION,
-    EMIT_BAND_COUNT,
 )
 
 # Global EE initialization flag
@@ -87,118 +85,102 @@ def get_s1_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollect
     )
 
 
-def get_emit_collection(aoi: ee.Geometry, start: str, end: str) -> ee.ImageCollection:
-    """Get EMIT L2A Reflectance collection filtered by AOI and date range."""
-    return (
-        ee.ImageCollection(EMIT_COLLECTION)
-        .filterBounds(aoi)
-        .filterDate(start, end)
-    )
+def _normalize_minmax(val, default):
+    """Pass through scalar or list. None falls back to default scalar."""
+    if val is None:
+        return default
+    if isinstance(val, (list, tuple)):
+        return [float(v) for v in val]
+    return float(val)
 
 
-def resolve_emit_image(item_id: str) -> ee.Image:
-    """Resolve EMIT item ID to an Earth Engine Image."""
-    try:
-        if "/" in item_id or item_id.startswith("NASA/"):
-            return ee.Image(item_id)
-        else:
-            return ee.Image(f"{EMIT_COLLECTION}/{item_id}")
-    except Exception as e:
-        raise ValueError(f"Invalid EMIT item_id: {e}")
+def get_visualization_params(
+    bands: Optional[List[str]] = None,
+    min_val=None,
+    max_val=None,
+) -> dict:
+    """RGB visualization parameters for Sentinel-2 SR.
 
-
-def get_emit_band_metadata(img: ee.Image) -> List[Dict[str, any]]:
-    """Get band metadata (names and wavelengths) from EMIT image.
-    
-    Returns:
-        List of dicts with 'name' and 'wavelength_nm' keys
+    `min_val` / `max_val` may be scalars (applied to all bands) or 3-element lists
+    matching the bands order. Gamma is intentionally omitted — it lives in the
+    client-side rendering layer (CSS/SVG filter) so users can adjust it without
+    re-issuing a getMapId call.
     """
-    try:
-        # Get band names from the image
-        band_names = img.bandNames().getInfo()
-        
-        # EMIT bands are typically named with wavelength in nm
-        # Format is usually like 'RFL_380', 'RFL_381', etc. or just wavelength numbers
-        band_metadata = []
-        
-        for band_name in band_names:
-            # Try to extract wavelength from band name
-            wavelength = None
+    return {
+        "bands": list(bands) if bands else ["B4", "B3", "B2"],
+        "min": _normalize_minmax(min_val, 0.0),
+        "max": _normalize_minmax(max_val, 3000.0),
+    }
+
+
+def get_s1_visualization_params(
+    bands: Optional[List[str]] = None,
+    min_val=None,
+    max_val=None,
+) -> dict:
+    """Visualization parameters for Sentinel-1 GRD (VV, VH bands in dB).
+
+    `min_val` / `max_val` may be scalars or per-band lists.
+    """
+    return {
+        "bands": list(bands) if bands else ["VV", "VH", "VV"],
+        "min": _normalize_minmax(min_val, -25.0),
+        "max": _normalize_minmax(max_val, 0.0),
+    }
+
+
+def compute_band_stretch_stats(
+    image: ee.Image,
+    aoi: ee.Geometry,
+    bands: List[str],
+    pct_low: float = 2.0,
+    pct_high: float = 98.0,
+    scale: int = 10,
+) -> Dict[str, Dict[str, float]]:
+    """Compute per-band min, max, and percentile values inside AOI.
+
+    Returns: { "B4": {"min": .., "max": .., "p_low": .., "p_high": ..}, ... }
+    """
+    if not bands:
+        return {}
+
+    pct_low = float(max(0.0, min(100.0, pct_low)))
+    pct_high = float(max(0.0, min(100.0, pct_high)))
+    if pct_high < pct_low:
+        pct_low, pct_high = pct_high, pct_low
+
+    img = image.select(bands)
+    reducer = (
+        ee.Reducer.minMax()
+        .combine(ee.Reducer.percentile([pct_low, pct_high]), sharedInputs=True)
+    )
+    stats = img.reduceRegion(
+        reducer=reducer,
+        geometry=aoi,
+        scale=scale,
+        maxPixels=1e9,
+        bestEffort=True,
+        tileScale=4,
+    ).getInfo() or {}
+
+    out: Dict[str, Dict[str, float]] = {}
+    p_low_key = f"p{int(pct_low) if pct_low.is_integer() else pct_low}"
+    p_high_key = f"p{int(pct_high) if pct_high.is_integer() else pct_high}"
+    for b in bands:
+        def _g(suffix: str) -> Optional[float]:
+            v = stats.get(f"{b}_{suffix}")
             try:
-                # EMIT bands might be named like 'RFL_380' or just '380'
-                if '_' in band_name:
-                    # Extract number after underscore
-                    parts = band_name.split('_')
-                    if len(parts) > 1:
-                        wavelength_str = parts[-1]
-                        wavelength = float(wavelength_str)
-                elif band_name.isdigit() or (band_name.replace('.', '').isdigit()):
-                    wavelength = float(band_name)
-                else:
-                    # Try to extract any number from the band name
-                    import re
-                    numbers = re.findall(r'\d+\.?\d*', band_name)
-                    if numbers:
-                        wavelength = float(numbers[0])
-            except (ValueError, AttributeError):
-                pass
-            
-            band_metadata.append({
-                'name': band_name,
-                'wavelength_nm': wavelength,
-            })
-        
-        return band_metadata
-    except Exception as e:
-        print(f"Error getting EMIT band metadata: {e}")
-        # Fallback: return band names without wavelength
-        try:
-            band_names = img.bandNames().getInfo()
-            return [{'name': name, 'wavelength_nm': None} for name in band_names]
-        except Exception:
-            return []
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
 
-
-def build_feature_collection_simple_emit(col: ee.ImageCollection, aoi: ee.Geometry) -> ee.FeatureCollection:
-    """Lightweight feature collection builder for EMIT."""
-    aoi_area = aoi.area(1)
-    
-    def _map(img):
-        footprint = img.geometry(1)
-        inter = footprint.intersection(aoi, 1)
-        inter_area = inter.area(1)
-        ratio = inter_area.divide(aoi_area)
-        
-        # Get band count
-        band_count = img.bandNames().size()
-        
-        return ee.Feature(None, {
-            'id': img.id(),
-            'datetime': img.get('system:time_start'),
-            'band_count': band_count,
-            'aoi_overlap': ratio
-        })
-    
-    return ee.FeatureCollection(col.map(_map))
-
-
-def get_visualization_params() -> dict:
-    """Get RGB visualization parameters for Sentinel-2 SR."""
-    return {
-        "bands": ["B4", "B3", "B2"],
-        "min": 0,
-        "max": 3000,
-        "gamma": 1.1,
-    }
-
-
-def get_s1_visualization_params() -> dict:
-    """Visualization parameters for Sentinel-1 GRD (VV, VH bands in dB)."""
-    return {
-        'bands': ['VV', 'VH', 'VV'],
-        'min': -25,
-        'max': 0,
-    }
+        out[b] = {
+            "min": _g("min"),
+            "max": _g("max"),
+            "p_low": _g(p_low_key),
+            "p_high": _g(p_high_key),
+        }
+    return out
 
 
 def get_model_names() -> dict:

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mangrove Detection Platform</title>
+    <title>EarthScope</title>
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -86,7 +86,7 @@
     </style>
 
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=mask-v5">
 </head>
 
 <body>
@@ -122,7 +122,7 @@
     <!-- Top Header Bar -->
     <div id="header-bar">
         <div class="header-left">
-            <h1>🛰️ Mangrove Detection Platform</h1>
+            <h1>🛰️ EarthScope</h1>
         </div>
         <div class="header-right">
             <div id="notification" class="notification hidden"></div>
@@ -133,18 +133,34 @@
     <div id="control-panel" class="panel">
         <button id="panel-toggle-btn" class="panel-edge-toggle left-edge-toggle" title="Hide panel">◀</button>
         <div class="panel-header">
-            <h3>🎯 Mangrove Analysis</h3>
+            <h3>🎯 Earth Analysis</h3>
         </div>
 
-        <!-- Tab Navigation -->
-        <div class="tab-navigation">
-            <button class="tab-btn active" data-tab="search">🛰️ Satellite Search</button>
-            <button class="tab-btn" data-tab="local-image" id="local-image-tab">📁 Local Image</button>
-            <!-- <button class="tab-btn" data-tab="analysis" id="analysis-tab">📊 Analysis Results</button> -->
-            <!-- <button class="tab-btn" data-tab="change-monitoring" id="change-monitoring-tab">📈 Change Monitoring</button> -->
+        <!-- Slot toggle (Time A / Time B) — mirrors right panel so the -->
+        <!-- left-panel search, selection and processed context belong to -->
+        <!-- whichever slot is currently active. -->
+        <div class="slot-toolbar left-slot-toolbar" id="left-slot-toolbar"
+             title="Each slot keeps its own search results and selected image.">
+            <div class="slot-toggle-group">
+                <button class="slot-btn active" data-slot="A">
+                    <span class="slot-btn-label">Time A</span>
+                    <span class="slot-btn-sub" data-slot-sub-left="A">empty</span>
+                </button>
+                <button class="slot-btn" data-slot="B">
+                    <span class="slot-btn-label">Time B</span>
+                    <span class="slot-btn-sub" data-slot-sub-left="B">empty</span>
+                </button>
+            </div>
         </div>
 
         <div class="panel-content">
+            <!-- Tab Navigation -->
+            <div class="tab-navigation">
+                <button class="tab-btn active" data-tab="search">🛰️ Satellite Search</button>
+                <button class="tab-btn" data-tab="local-image" id="local-image-tab">📁 Local Image</button>
+                <!-- <button class="tab-btn" data-tab="analysis" id="analysis-tab">📊 Analysis Results</button> -->
+            </div>
+
             <!-- Search Tab Content -->
             <div id="search-tab-content" class="tab-content active">
                 <!-- Coordinate Search -->
@@ -223,105 +239,295 @@
 
                 <!-- Sentinel-2 Channel Selection (shown by default) -->
                 <div id="s2-channel-options" class="control-group s2-options">
-                    <label>Drag bands to RGB:</label>
-                    <div class="band-dnd-container">
-                        <div class="band-pool" id="s2-band-pool">
-                            <div class="band-chip" draggable="true" data-band="B2">B2</div>
-                            <div class="band-chip" draggable="true" data-band="B3">B3</div>
-                            <div class="band-chip" draggable="true" data-band="B4">B4</div>
-                            <div class="band-chip" draggable="true" data-band="B5">B5</div>
-                            <div class="band-chip" draggable="true" data-band="B6">B6</div>
-                            <div class="band-chip" draggable="true" data-band="B7">B7</div>
-                            <div class="band-chip" draggable="true" data-band="B8">B8</div>
-                            <div class="band-chip" draggable="true" data-band="B8A">B8A</div>
-                            <div class="band-chip" draggable="true" data-band="B11">B11</div>
-                            <div class="band-chip" draggable="true" data-band="B12">B12</div>
-                        </div>
-                        <div class="rgb-slots">
-                            <div class="rgb-slot r-slot" data-channel="R" id="s2-slot-r">
-                                <span class="slot-label">R</span>
-                                <span class="slot-band" data-band="B4">B4</span>
+                    <div class="symbology-block" data-prefix="s2" data-default-min="0" data-default-max="3000" data-default-pct-low="2" data-default-pct-high="98">
+                        <div class="symbology-section" data-section="bands" data-default-bands="B4,B3,B2">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Bands</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-bands" title="Reset band slots to defaults">↻</button>
+                                </div>
                             </div>
-                            <div class="rgb-slot g-slot" data-channel="G" id="s2-slot-g">
-                                <span class="slot-label">G</span>
-                                <span class="slot-band" data-band="B3">B3</span>
-                            </div>
-                            <div class="rgb-slot b-slot" data-channel="B" id="s2-slot-b">
-                                <span class="slot-label">B</span>
-                                <span class="slot-band" data-band="B2">B2</span>
+                            <div class="symbology-section-body">
+                                <div class="band-dnd-container">
+                                    <div class="band-pool" id="s2-band-pool">
+                                        <div class="band-chip" draggable="true" data-band="B2">B2</div>
+                                        <div class="band-chip" draggable="true" data-band="B3">B3</div>
+                                        <div class="band-chip" draggable="true" data-band="B4">B4</div>
+                                        <div class="band-chip" draggable="true" data-band="B5">B5</div>
+                                        <div class="band-chip" draggable="true" data-band="B6">B6</div>
+                                        <div class="band-chip" draggable="true" data-band="B7">B7</div>
+                                        <div class="band-chip" draggable="true" data-band="B8">B8</div>
+                                        <div class="band-chip" draggable="true" data-band="B8A">B8A</div>
+                                        <div class="band-chip" draggable="true" data-band="B11">B11</div>
+                                        <div class="band-chip" draggable="true" data-band="B12">B12</div>
+                                    </div>
+                                    <div class="rgb-slots">
+                                        <div class="rgb-slot r-slot" data-channel="R" id="s2-slot-r">
+                                            <span class="slot-label">R</span>
+                                            <span class="slot-band" data-band="B4">B4</span>
+                                        </div>
+                                        <div class="rgb-slot g-slot" data-channel="G" id="s2-slot-g">
+                                            <span class="slot-label">G</span>
+                                            <span class="slot-band" data-band="B3">B3</span>
+                                        </div>
+                                        <div class="rgb-slot b-slot" data-channel="B" id="s2-slot-b">
+                                            <span class="slot-label">B</span>
+                                            <span class="slot-band" data-band="B2">B2</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="percentile-stretch">
-                        <div class="dual-range-header">
-                            <span>Percentile Stretch</span>
-                            <span class="dual-range-values"><input type="number" id="s2-pct-low-val" class="pct-input" value="0.0" min="0" max="100" step="0.1">% — <input type="number" id="s2-pct-high-val" class="pct-input" value="100.0" min="0" max="100" step="0.1">%</span>
+                        <div class="symbology-section" data-section="visualization">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Visualization</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="auto" title="Auto-stretch from current AOI">Auto</button>
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-vis" title="Reset visualization">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="mode-toggle" role="radiogroup" aria-label="Stretch mode">
+                                    <button type="button" class="mode-toggle-option active" data-mode="minmax">Min/Max</button>
+                                    <button type="button" class="mode-toggle-option" data-mode="percentile">Cumulative</button>
+                                </div>
+                                <div class="mode-panel" data-mode-panel="minmax">
+                                    <div class="minmax-grid">
+                                        <span class="minmax-col-head"></span>
+                                        <span class="minmax-col-head">Min</span>
+                                        <span class="minmax-col-head">Max</span>
+                                        <span class="minmax-channel-tag tag-r">R</span>
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="max" value="3000" step="any">
+                                        <span class="minmax-channel-tag tag-g">G</span>
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="max" value="3000" step="any">
+                                        <span class="minmax-channel-tag tag-b">B</span>
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="max" value="3000" step="any">
+                                    </div>
+                                </div>
+                                <div class="mode-panel hidden" data-mode-panel="percentile">
+                                    <div class="dual-range-header">
+                                        <span>Cumulative count cut</span>
+                                        <span class="dual-range-values"><input type="number" id="s2-pct-low-val" class="pct-input" value="2.0" min="0" max="100" step="0.1">% — <input type="number" id="s2-pct-high-val" class="pct-input" value="98.0" min="0" max="100" step="0.1">%</span>
+                                    </div>
+                                    <div class="dual-range-wrap">
+                                        <input type="range" id="s2-pct-low" min="0" max="100" value="2" step="0.1" class="dual-range dual-range-low">
+                                        <input type="range" id="s2-pct-high" min="0" max="100" value="98" step="0.1" class="dual-range dual-range-high">
+                                    </div>
+                                </div>
+                                <button id="apply-s2-vis" class="control-btn primary apply-vis-btn">Apply</button>
+                            </div>
                         </div>
-                        <div class="dual-range-wrap">
-                            <input type="range" id="s2-pct-low" min="0" max="100" value="0" step="0.1" class="dual-range dual-range-low">
-                            <input type="range" id="s2-pct-high" min="0" max="100" value="100" step="0.1" class="dual-range dual-range-high">
+                        <div class="symbology-section collapsed" data-section="rendering">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Rendering</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-render" title="Reset rendering">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="render-row" data-key="gamma" data-default="1" data-min="0.1" data-max="3" data-step="0.01">
+                                    <label>Gamma</label>
+                                    <input type="range" class="render-slider" min="0.1" max="3" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0.1" max="3" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="contrast" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Contrast</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="brightness" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Brightness</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="saturation" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Saturation</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="symbology-section collapsed" data-section="keyboard-shortcut">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Keyboard Shortcut</span>
+                                </button>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="keyboard-shortcut-section">
+                                    <label class="shortcut-toggle-label">
+                                        <input type="checkbox" id="keyboard-shortcut-toggle">
+                                        Keyboard Shortcut Mode
+                                    </label>
+                                    <div id="keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
+                                        <div class="shortcut-slot" data-key="1" data-band="B2"><span class="slot-key">1</span><span class="slot-band-label" data-band="B2">B2</span></div>
+                                        <div class="shortcut-slot" data-key="2" data-band="B3"><span class="slot-key">2</span><span class="slot-band-label" data-band="B3">B3</span></div>
+                                        <div class="shortcut-slot" data-key="3" data-band="B4"><span class="slot-key">3</span><span class="slot-band-label" data-band="B4">B4</span></div>
+                                        <div class="shortcut-slot" data-key="4" data-band="B5"><span class="slot-key">4</span><span class="slot-band-label" data-band="B5">B5</span></div>
+                                        <div class="shortcut-slot" data-key="5" data-band="B6"><span class="slot-key">5</span><span class="slot-band-label" data-band="B6">B6</span></div>
+                                        <div class="shortcut-slot" data-key="6" data-band="B7"><span class="slot-key">6</span><span class="slot-band-label" data-band="B7">B7</span></div>
+                                        <div class="shortcut-slot" data-key="7" data-band="B8"><span class="slot-key">7</span><span class="slot-band-label" data-band="B8">B8</span></div>
+                                        <div class="shortcut-slot" data-key="8" data-band="B8A"><span class="slot-key">8</span><span class="slot-band-label" data-band="B8A">B8A</span></div>
+                                        <div class="shortcut-slot" data-key="9" data-band="B11"><span class="slot-key">9</span><span class="slot-band-label" data-band="B11">B11</span></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <input type="hidden" id="s2-min" value="0">
                     <input type="hidden" id="s2-max" value="3000">
-                    <button id="apply-s2-vis" class="control-btn primary apply-vis-btn">Apply</button>
-
-                    <!-- Keyboard Shortcut Mode -->
-                    <div class="keyboard-shortcut-section">
-                        <label class="shortcut-toggle-label">
-                            <input type="checkbox" id="keyboard-shortcut-toggle">
-                            Keyboard Shortcut Mode
-                        </label>
-                        <div id="keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
-                            <div class="shortcut-slot" data-key="1" data-band="B2"><span class="slot-key">1</span><span class="slot-band-label" data-band="B2">B2</span></div>
-                            <div class="shortcut-slot" data-key="2" data-band="B3"><span class="slot-key">2</span><span class="slot-band-label" data-band="B3">B3</span></div>
-                            <div class="shortcut-slot" data-key="3" data-band="B4"><span class="slot-key">3</span><span class="slot-band-label" data-band="B4">B4</span></div>
-                            <div class="shortcut-slot" data-key="4" data-band="B5"><span class="slot-key">4</span><span class="slot-band-label" data-band="B5">B5</span></div>
-                            <div class="shortcut-slot" data-key="5" data-band="B6"><span class="slot-key">5</span><span class="slot-band-label" data-band="B6">B6</span></div>
-                            <div class="shortcut-slot" data-key="6" data-band="B7"><span class="slot-key">6</span><span class="slot-band-label" data-band="B7">B7</span></div>
-                            <div class="shortcut-slot" data-key="7" data-band="B8"><span class="slot-key">7</span><span class="slot-band-label" data-band="B8">B8</span></div>
-                            <div class="shortcut-slot" data-key="8" data-band="B8A"><span class="slot-key">8</span><span class="slot-band-label" data-band="B8A">B8A</span></div>
-                            <div class="shortcut-slot" data-key="9" data-band="B11"><span class="slot-key">9</span><span class="slot-band-label" data-band="B11">B11</span></div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Sentinel-1 Channel Selection (hidden by default) -->
                 <div id="s1-channel-options" class="control-group s1-options hidden">
-                    <label>Drag bands to RGB:</label>
-                    <div class="band-dnd-container">
-                        <div class="band-pool" id="s1-band-pool">
-                            <div class="band-chip" draggable="true" data-band="VV">VV</div>
-                            <div class="band-chip" draggable="true" data-band="VH">VH</div>
-                        </div>
-                        <div class="rgb-slots">
-                            <div class="rgb-slot r-slot" data-channel="R" id="s1-slot-r">
-                                <span class="slot-label">R</span>
-                                <span class="slot-band" data-band="VV">VV</span>
+                    <div class="symbology-block" data-prefix="s1" data-default-min="-25" data-default-max="0" data-default-pct-low="2" data-default-pct-high="98">
+                        <div class="symbology-section" data-section="bands" data-default-bands="VV,VH,VV">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Bands</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-bands" title="Reset band slots to defaults">↻</button>
+                                </div>
                             </div>
-                            <div class="rgb-slot g-slot" data-channel="G" id="s1-slot-g">
-                                <span class="slot-label">G</span>
-                                <span class="slot-band" data-band="VH">VH</span>
-                            </div>
-                            <div class="rgb-slot b-slot" data-channel="B" id="s1-slot-b">
-                                <span class="slot-label">B</span>
-                                <span class="slot-band" data-band="VV">VV</span>
+                            <div class="symbology-section-body">
+                                <div class="band-dnd-container">
+                                    <div class="band-pool" id="s1-band-pool">
+                                        <div class="band-chip" draggable="true" data-band="VV">VV</div>
+                                        <div class="band-chip" draggable="true" data-band="VH">VH</div>
+                                    </div>
+                                    <div class="rgb-slots">
+                                        <div class="rgb-slot r-slot" data-channel="R" id="s1-slot-r">
+                                            <span class="slot-label">R</span>
+                                            <span class="slot-band" data-band="VV">VV</span>
+                                        </div>
+                                        <div class="rgb-slot g-slot" data-channel="G" id="s1-slot-g">
+                                            <span class="slot-label">G</span>
+                                            <span class="slot-band" data-band="VH">VH</span>
+                                        </div>
+                                        <div class="rgb-slot b-slot" data-channel="B" id="s1-slot-b">
+                                            <span class="slot-label">B</span>
+                                            <span class="slot-band" data-band="VV">VV</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="percentile-stretch">
-                        <div class="dual-range-header">
-                            <span>Percentile Stretch</span>
-                            <span class="dual-range-values"><input type="number" id="s1-pct-low-val" class="pct-input" value="0.0" min="0" max="100" step="0.1">% — <input type="number" id="s1-pct-high-val" class="pct-input" value="100.0" min="0" max="100" step="0.1">%</span>
+                        <div class="symbology-section" data-section="visualization">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Visualization</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="auto" title="Auto-stretch from current AOI">Auto</button>
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-vis" title="Reset visualization">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="mode-toggle" role="radiogroup" aria-label="Stretch mode">
+                                    <button type="button" class="mode-toggle-option active" data-mode="minmax">Min/Max</button>
+                                    <button type="button" class="mode-toggle-option" data-mode="percentile">Cumulative</button>
+                                </div>
+                                <div class="mode-panel" data-mode-panel="minmax">
+                                    <div class="minmax-grid">
+                                        <span class="minmax-col-head"></span>
+                                        <span class="minmax-col-head">Min</span>
+                                        <span class="minmax-col-head">Max</span>
+                                        <span class="minmax-channel-tag tag-r">R</span>
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="min" value="-25" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="max" value="0" step="any">
+                                        <span class="minmax-channel-tag tag-g">G</span>
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="min" value="-25" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="max" value="0" step="any">
+                                        <span class="minmax-channel-tag tag-b">B</span>
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="min" value="-25" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="max" value="0" step="any">
+                                    </div>
+                                </div>
+                                <div class="mode-panel hidden" data-mode-panel="percentile">
+                                    <div class="dual-range-header">
+                                        <span>Cumulative count cut</span>
+                                        <span class="dual-range-values"><input type="number" id="s1-pct-low-val" class="pct-input" value="2.0" min="0" max="100" step="0.1">% — <input type="number" id="s1-pct-high-val" class="pct-input" value="98.0" min="0" max="100" step="0.1">%</span>
+                                    </div>
+                                    <div class="dual-range-wrap">
+                                        <input type="range" id="s1-pct-low" min="0" max="100" value="2" step="0.1" class="dual-range dual-range-low">
+                                        <input type="range" id="s1-pct-high" min="0" max="100" value="98" step="0.1" class="dual-range dual-range-high">
+                                    </div>
+                                </div>
+                                <button id="apply-s1-vis" class="control-btn primary apply-vis-btn">Apply</button>
+                            </div>
                         </div>
-                        <div class="dual-range-wrap">
-                            <input type="range" id="s1-pct-low" min="0" max="100" value="0" step="0.1" class="dual-range dual-range-low">
-                            <input type="range" id="s1-pct-high" min="0" max="100" value="100" step="0.1" class="dual-range dual-range-high">
+                        <div class="symbology-section collapsed" data-section="rendering">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Rendering</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-render" title="Reset rendering">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="render-row" data-key="gamma" data-default="1" data-min="0.1" data-max="3" data-step="0.01">
+                                    <label>Gamma</label>
+                                    <input type="range" class="render-slider" min="0.1" max="3" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0.1" max="3" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="contrast" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Contrast</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="brightness" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Brightness</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="saturation" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Saturation</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="symbology-section collapsed" data-section="keyboard-shortcut">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Keyboard Shortcut</span>
+                                </button>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="keyboard-shortcut-section">
+                                    <label class="shortcut-toggle-label">
+                                        <input type="checkbox" id="s1-keyboard-shortcut-toggle">
+                                        Keyboard Shortcut Mode
+                                    </label>
+                                    <div id="s1-keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
+                                        <div class="shortcut-slot" data-key="1" data-band="VV"><span class="slot-key">1</span><span class="slot-band-label" data-band="VV">VV</span></div>
+                                        <div class="shortcut-slot" data-key="2" data-band="VH"><span class="slot-key">2</span><span class="slot-band-label" data-band="VH">VH</span></div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <input type="hidden" id="s1-min" value="-25">
                     <input type="hidden" id="s1-max" value="0">
-                    <button id="apply-s1-vis" class="control-btn primary apply-vis-btn">Apply</button>
                 </div>
 
                 <div class="control-group analyze-btn-group">
@@ -418,50 +624,139 @@
 
                 <!-- Shared Band Controls (used by both modes) -->
                 <div id="local-band-controls" class="control-group" style="display:none;">
-                    <label>Drag bands to RGB:</label>
-                    <div class="band-dnd-container">
-                        <div class="band-pool" id="local-band-pool">
-                            <!-- Band chips populated dynamically -->
-                        </div>
-                        <div class="rgb-slots">
-                            <div class="rgb-slot r-slot" data-channel="R" id="local-slot-r">
-                                <span class="slot-label">R</span>
-                                <span class="slot-band" data-band="">-</span>
+                    <div class="symbology-block" data-prefix="local" data-default-min="0" data-default-max="3000" data-default-pct-low="2" data-default-pct-high="98">
+                        <div class="symbology-section" data-section="bands">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Bands</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-bands" title="Reset band slots">↻</button>
+                                </div>
                             </div>
-                            <div class="rgb-slot g-slot" data-channel="G" id="local-slot-g">
-                                <span class="slot-label">G</span>
-                                <span class="slot-band" data-band="">-</span>
-                            </div>
-                            <div class="rgb-slot b-slot" data-channel="B" id="local-slot-b">
-                                <span class="slot-label">B</span>
-                                <span class="slot-band" data-band="">-</span>
+                            <div class="symbology-section-body">
+                                <div class="band-dnd-container">
+                                    <div class="band-pool" id="local-band-pool">
+                                        <!-- Band chips populated dynamically -->
+                                    </div>
+                                    <div class="rgb-slots">
+                                        <div class="rgb-slot r-slot" data-channel="R" id="local-slot-r">
+                                            <span class="slot-label">R</span>
+                                            <span class="slot-band" data-band="">-</span>
+                                        </div>
+                                        <div class="rgb-slot g-slot" data-channel="G" id="local-slot-g">
+                                            <span class="slot-label">G</span>
+                                            <span class="slot-band" data-band="">-</span>
+                                        </div>
+                                        <div class="rgb-slot b-slot" data-channel="B" id="local-slot-b">
+                                            <span class="slot-label">B</span>
+                                            <span class="slot-band" data-band="">-</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <div class="percentile-stretch">
-                        <div class="dual-range-header">
-                            <span>Percentile Stretch</span>
-                            <span class="dual-range-values"><input type="number" id="local-pct-low-val" class="pct-input" value="2.0" min="0" max="100" step="0.1">% — <input type="number" id="local-pct-high-val" class="pct-input" value="98.0" min="0" max="100" step="0.1">%</span>
+                        <div class="symbology-section" data-section="visualization">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▾</span>
+                                    <span class="symbology-title">Visualization</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="auto" title="Auto-stretch from raster percentiles">Auto</button>
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-vis" title="Reset visualization">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="mode-toggle" role="radiogroup" aria-label="Stretch mode">
+                                    <button type="button" class="mode-toggle-option active" data-mode="minmax">Min/Max</button>
+                                    <button type="button" class="mode-toggle-option" data-mode="percentile">Cumulative</button>
+                                </div>
+                                <div class="mode-panel" data-mode-panel="minmax">
+                                    <div class="minmax-grid">
+                                        <span class="minmax-col-head"></span>
+                                        <span class="minmax-col-head">Min</span>
+                                        <span class="minmax-col-head">Max</span>
+                                        <span class="minmax-channel-tag tag-r">R</span>
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="r" data-field="max" value="3000" step="any">
+                                        <span class="minmax-channel-tag tag-g">G</span>
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="g" data-field="max" value="3000" step="any">
+                                        <span class="minmax-channel-tag tag-b">B</span>
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="min" value="0" step="any">
+                                        <input type="number" class="symbology-num-input" data-channel="b" data-field="max" value="3000" step="any">
+                                    </div>
+                                </div>
+                                <div class="mode-panel hidden" data-mode-panel="percentile">
+                                    <div class="dual-range-header">
+                                        <span>Cumulative count cut</span>
+                                        <span class="dual-range-values"><input type="number" id="local-pct-low-val" class="pct-input" value="2.0" min="0" max="100" step="0.1">% — <input type="number" id="local-pct-high-val" class="pct-input" value="98.0" min="0" max="100" step="0.1">%</span>
+                                    </div>
+                                    <div class="dual-range-wrap">
+                                        <input type="range" id="local-pct-low" min="0" max="100" value="2" step="0.1" class="dual-range dual-range-low">
+                                        <input type="range" id="local-pct-high" min="0" max="100" value="98" step="0.1" class="dual-range dual-range-high">
+                                    </div>
+                                </div>
+                                <button id="apply-local-vis" class="control-btn primary apply-vis-btn">Apply</button>
+                            </div>
                         </div>
-                        <div class="dual-range-wrap">
-                            <input type="range" id="local-pct-low" min="0" max="100" value="2" step="0.1" class="dual-range dual-range-low">
-                            <input type="range" id="local-pct-high" min="0" max="100" value="98" step="0.1" class="dual-range dual-range-high">
+                        <div class="symbology-section collapsed" data-section="rendering">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Rendering</span>
+                                </button>
+                                <div class="symbology-actions">
+                                    <button type="button" class="symbology-icon-btn" data-action="reset-render" title="Reset rendering">↻</button>
+                                </div>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="render-row" data-key="gamma" data-default="1" data-min="0.1" data-max="3" data-step="0.01">
+                                    <label>Gamma</label>
+                                    <input type="range" class="render-slider" min="0.1" max="3" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0.1" max="3" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="contrast" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Contrast</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="brightness" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Brightness</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                                <div class="render-row" data-key="saturation" data-default="1" data-min="0" data-max="2" data-step="0.01">
+                                    <label>Saturation</label>
+                                    <input type="range" class="render-slider" min="0" max="2" step="0.01" value="1">
+                                    <input type="number" class="render-num" min="0" max="2" step="0.01" value="1.00">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="symbology-section collapsed" data-section="keyboard-shortcut">
+                            <div class="symbology-section-header">
+                                <button type="button" class="symbology-toggle-btn" data-action="toggle">
+                                    <span class="symbology-chevron">▸</span>
+                                    <span class="symbology-title">Keyboard Shortcut</span>
+                                </button>
+                            </div>
+                            <div class="symbology-section-body">
+                                <div class="keyboard-shortcut-section">
+                                    <label class="shortcut-toggle-label">
+                                        <input type="checkbox" id="local-keyboard-shortcut-toggle">
+                                        Keyboard Shortcut Mode
+                                    </label>
+                                    <div id="local-keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
+                                        <!-- Populated dynamically based on available bands -->
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <input type="hidden" id="local-min" value="0">
                     <input type="hidden" id="local-max" value="3000">
-                    <button id="apply-local-vis" class="control-btn primary apply-vis-btn">Apply</button>
-
-                    <!-- Keyboard Shortcut Mode for local -->
-                    <div class="keyboard-shortcut-section">
-                        <label class="shortcut-toggle-label">
-                            <input type="checkbox" id="local-keyboard-shortcut-toggle">
-                            Keyboard Shortcut Mode
-                        </label>
-                        <div id="local-keyboard-shortcut-slots" class="shortcut-slots" style="display:none;">
-                            <!-- Populated dynamically based on available bands -->
-                        </div>
-                    </div>
                 </div>
 
                 <div class="control-group analyze-btn-group">
@@ -490,7 +785,6 @@
             </div>
             -->
 
-            <!-- Change Monitoring Tab Content (disabled) -->
         </div>
 
         <!-- Layer Control Panel (shared across tabs, fixed at bottom of panel) -->
@@ -512,6 +806,20 @@
         <div class="tab-navigation right-tab-navigation">
             <button class="right-tab-btn active" data-right-tab="analysis">📊 Analysis</button>
             <button class="right-tab-btn" data-right-tab="spectral-inspector">🔬 Spectral Inspector</button>
+            <button class="right-tab-btn" data-right-tab="change-detection" id="change-detection-tab-btn"
+                    disabled title="Run one analysis in each slot to enable">🔀 Change Detection</button>
+        </div>
+        <div class="slot-toolbar" id="slot-toolbar" title="Hold two independent analyses for change detection">
+            <div class="slot-toggle-group">
+                <button class="slot-btn active" data-slot="A">
+                    <span class="slot-btn-label">Time A</span>
+                    <span class="slot-btn-sub" data-slot-sub="A">empty</span>
+                </button>
+                <button class="slot-btn" data-slot="B">
+                    <span class="slot-btn-label">Time B</span>
+                    <span class="slot-btn-sub" data-slot-sub="B">empty</span>
+                </button>
+            </div>
         </div>
         <div class="right-panel-content">
             <div id="right-analysis-tab-content" class="right-tab-content active">
@@ -529,7 +837,6 @@
                         <label>Inspection Tool:</label>
                         <div class="spectral-tool-buttons">
                             <button id="spectral-point-tool" class="control-btn secondary">📍 Point</button>
-                            <button id="spectral-area-tool" class="control-btn secondary">⬜ Area</button>
                         </div>
                     </div>
                     <div class="control-group">
@@ -540,6 +847,19 @@
                         <canvas id="spectral-combined-chart"></canvas>
                     </div>
                     <div id="spectral-entries" class="spectral-entries-list"></div>
+                </div>
+            </div>
+            <div id="right-change-detection-tab-content" class="right-tab-content">
+                <div class="cd-tab">
+                    <div class="cd-tab-header">
+                        <h4>Change Detection</h4>
+                        <p class="cd-tab-hint">Compare an analysis from Time A against one from Time B.</p>
+                    </div>
+                    <div class="analysis-list cd-analysis-list" id="cd-analysis-list">
+                        <!-- Change-detection methods are injected here as .analysis-item.*-option
+                             by ChangeDetectionController. Each expandable item follows the same
+                             collapsed/expanded pattern as Target Detection / SAM3. -->
+                    </div>
                 </div>
             </div>
         </div>
@@ -607,6 +927,52 @@
     </div>
 
 
+
+    <!-- Session gate — must load first so the overlay can appear before anything else -->
+    <style>
+        #session-gate-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            background: rgba(15, 20, 30, 0.96);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif;
+        }
+        #session-gate-overlay .sg-box {
+            max-width: 420px;
+            padding: 32px 36px;
+            background: #1e2636;
+            border-radius: 14px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        #session-gate-overlay .sg-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255,255,255,0.18);
+            border-top-color: #4da3ff;
+            border-radius: 50%;
+            margin: 0 auto 18px;
+            animation: sg-spin 1.1s linear infinite;
+        }
+        #session-gate-overlay .sg-title {
+            margin: 0 0 10px;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        #session-gate-overlay .sg-body {
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.55;
+            color: #c8d4e6;
+        }
+        @keyframes sg-spin { to { transform: rotate(360deg); } }
+    </style>
+    <script src="/static/js/session-gate.js"></script>
+    <script>window.SESSION_GATE.start();</script>
 
     <!-- JavaScript Libraries -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -740,34 +1106,66 @@
     <!-- Map Modules (load before map.js facade) -->
     <script src="/static/js/map-core.js"></script>
     <script src="/static/js/map-drawing.js"></script>
-    <script src="/static/js/map-layers.js"></script>
+    <script src="/static/js/map-layers.js?v=mask-v5"></script>
     <script src="/static/js/map-file-loader.js"></script>
-    <script src="/static/map.js"></script>
+    <script src="/static/map.js?v=mask-v5"></script>
 
     <!-- Platform Modules -->
     <script src="/static/js/api-client.js"></script>
     <script src="/static/js/ui-manager.js"></script>
     <script src="/static/js/search-results.js"></script>
-    <script src="/static/js/image-processor.js"></script>
+    <script src="/static/js/image-processor.js?v=mask-v5"></script>
     <script src="/static/js/image-search.js"></script>
     <script src="/static/js/analysis-controller.js"></script>
-    <script src="/static/js/change-monitoring.js"></script>
     <script src="/static/js/custom-visualization.js"></script>
-    <script src="/static/js/threshold-controller.js"></script>
-    <script src="/static/js/target-detection.js"></script>
-    <script src="/static/js/mangrove-segmentation-controller.js"></script>
-    <script src="/static/js/sam2-controller.js"></script>
-    <script src="/static/js/spectral-analysis-controller.js"></script>
-    <script src="/static/js/local-image-controller.js"></script>
+    <script src="/static/js/threshold-controller.js?v=mask-v5"></script>
+    <script src="/static/js/target-detection.js?v=mask-v5"></script>
+    <script src="/static/js/mangrove-segmentation-controller.js?v=mask-v5"></script>
+    <script src="/static/js/sam3-controller.js?v=mask-v5"></script>
+    <script src="/static/js/spectral-analysis-controller.js?v=mask-v5"></script>
+    <script src="/static/js/local-image-controller.js?v=mask-v5"></script>
     <script src="/static/js/spectral-inspector.js"></script>
-    <script src="/static/js/layer-control-panel.js"></script>
+    <script src="/static/js/layer-control-panel.js?v=mask-v5"></script>
+    <script src="/static/js/mask-composite.js?v=mask-v5"></script>
     <script src="/static/js/dual-map-controller.js"></script>
+    <script src="/static/js/change-detection-controller.js?v=mask-v5"></script>
+    <script src="/static/js/symbology-controller.js"></script>
     <script src="/static/script.js"></script>
+
+    <!-- SVG defs used by Tile Rendering (gamma component transfer + reusable filter) -->
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+        <defs>
+            <filter id="symbology-gamma-s2" color-interpolation-filters="sRGB">
+                <feComponentTransfer>
+                    <feFuncR type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncG type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncB type="gamma" amplitude="1" exponent="1" offset="0"/>
+                </feComponentTransfer>
+            </filter>
+            <filter id="symbology-gamma-s1" color-interpolation-filters="sRGB">
+                <feComponentTransfer>
+                    <feFuncR type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncG type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncB type="gamma" amplitude="1" exponent="1" offset="0"/>
+                </feComponentTransfer>
+            </filter>
+            <filter id="symbology-gamma-local" color-interpolation-filters="sRGB">
+                <feComponentTransfer>
+                    <feFuncR type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncG type="gamma" amplitude="1" exponent="1" offset="0"/>
+                    <feFuncB type="gamma" amplitude="1" exponent="1" offset="0"/>
+                </feComponentTransfer>
+            </filter>
+        </defs>
+    </svg>
 
     <script>
         // Initialize the application with proper order
-        document.addEventListener('DOMContentLoaded', function () {
-            console.log('🚀 Mangrove Detection Platform Initializing...');
+        document.addEventListener('DOMContentLoaded', async function () {
+            console.log('🚀 EarthScope Initializing...');
+
+            // Block boot until the session gate grants this client.
+            await window.SESSION_GATE.ready();
 
             // Wait for all external scripts to load completely
             setTimeout(() => {

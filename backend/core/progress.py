@@ -36,11 +36,11 @@ class JobProgress:
 
 class ProgressTracker:
     """Thread-safe progress tracker for managing multiple jobs."""
-    
+
     def __init__(self):
         self.jobs: Dict[str, JobProgress] = {}
         self.lock = threading.Lock()
-    
+
     def create_job(self, job_id: str, phases: List[tuple]) -> None:
         """Create a new job with phases. Each phase is (name, weight)."""
         with self.lock:

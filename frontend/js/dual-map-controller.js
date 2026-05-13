@@ -15,7 +15,7 @@ class DualMapController {
         this._syncing = false;
         this._syncHandlers = {};
         this._pendingReassignment = {};        // exact id -> {left, right}
-        this._pendingPrefixReassignment = {};  // prefix ('td', 'sam2-preview') -> {left, right}
+        this._pendingPrefixReassignment = {};  // prefix ('td', 'sam3-preview') -> {left, right}
 
         // Listen for base layer changes and window resize
         this._onBaseLayerChanged = (e) => this._handleBaseLayerChange(e.detail);
@@ -58,8 +58,9 @@ class DualMapController {
     activate() {
         if (this.isActive || !this.primaryMap) return;
 
-        const layers = this.layerPanel?.getCurrentLayers() || [];
-        if (layers.length < 2) return;
+        const groups = this._gatherAllLayers();
+        const totalCount = groups.A.length + groups.B.length + groups.cd.length;
+        if (totalCount < 2) return;
 
         this.isActive = true;
 
@@ -78,10 +79,21 @@ class DualMapController {
         // Create secondary map
         this._createSecondaryMap();
 
-        // Default assignment: all layers on left, none on right initially
+        // Our policy: compare mode always paints clones on both sides, so
+        // detach every currently-visible overlay from primary. They're still
+        // tracked in mapManager.layers and will be restored on deactivate.
+        this._detachActiveSlotLayersFromPrimary();
+
+        // Default assignment: Time A's first layer → left, Time B's first → right.
+        // Fall back to the active-slot entries or CD results when a slot is empty.
         this.leftLayerIds.clear();
         this.rightLayerIds.clear();
-        layers.forEach(l => this.leftLayerIds.add(l.id));
+        const defaultLeft = groups.A[0] || groups.cd[0] || groups.B[0];
+        const defaultRight = groups.B[0] || groups.cd[0] || groups.A[0];
+        if (defaultLeft) this._applyAssignment(defaultLeft.id, 'left', { skipRender: true });
+        if (defaultRight && defaultRight.id !== defaultLeft?.id) {
+            this._applyAssignment(defaultRight.id, 'right', { skipRender: true });
+        }
 
         // Render the layer assignment UI
         this._renderAssignmentUI();
@@ -94,6 +106,68 @@ class DualMapController {
 
         // Notify other controllers (e.g. target detection marker sync)
         window.dispatchEvent(new CustomEvent('comparemap:activated', { detail: { secondaryMap: this.secondaryMap } }));
+    }
+
+    /**
+     * Pull every pickable overlay for compare mode, grouped by source:
+     *   A:  Time A analyses (registered via LayerControlPanel, includes stashed)
+     *   B:  Time B analyses
+     *   cd: Change-detection results (not registered with the panel)
+     *
+     * Each returned entry has a uniform shape that _cloneLayerEntry /
+     * _showOnPrimary understand:
+     *   { id, name, type, source: 'A'|'B'|'cd', leafletLayer?,
+     *     overlayUrl?, overlayMeta?, resultId? }
+     */
+    _gatherAllLayers() {
+        const bySlot = this.layerPanel?.getAllAnalysisLayersBySlot?.() || { A: [], B: [] };
+        const cdEntries = this.platform?.changeDetection?.listResultsForCompareMode?.() || [];
+
+        const toEntry = (e, source) => ({
+            id: e.id,
+            name: e.name,
+            type: e.type || 'analysis',
+            source,
+            leafletLayer: e.leafletLayer || null,
+            overlayUrl: e.overlayUrl || null,
+            overlayMeta: e.overlayMeta || null,
+            resultId: e.resultId || null,
+        });
+
+        return {
+            A: bySlot.A.map(e => toEntry(e, 'A')),
+            B: bySlot.B.map(e => toEntry(e, 'B')),
+            cd: cdEntries.map(e => toEntry(e, 'cd')),
+        };
+    }
+
+    /**
+     * Detach currently-attached analysis/processed/tile overlays from the
+     * primary map so compare mode's clone-only policy has a clean canvas.
+     * `_restoreLayersToPrimary` puts them back on deactivate.
+     */
+    _detachActiveSlotLayersFromPrimary() {
+        const live = [
+            window.mapManager?.layers?.analysisLayers,
+            window.mapManager?.layers?.processedLayers,
+            window.mapManager?.layers?.tileLayers,
+        ];
+        for (const dict of live) {
+            if (!dict) continue;
+            for (const layer of Object.values(dict)) {
+                if (layer && this.primaryMap?.hasLayer(layer)) {
+                    try { this.primaryMap.removeLayer(layer); } catch (e) {}
+                }
+            }
+        }
+    }
+
+    _findEntryById(id) {
+        const groups = this._gatherAllLayers();
+        return groups.A.find(e => e.id === id)
+            || groups.B.find(e => e.id === id)
+            || groups.cd.find(e => e.id === id)
+            || null;
     }
 
     deactivate() {
@@ -130,6 +204,7 @@ class DualMapController {
         this.leftLayerIds.clear();
         this.rightLayerIds.clear();
         this.secondaryMapLayers = {};
+        this._leftMapLayers = {};
         this._pendingReassignment = {};
         this._pendingPrefixReassignment = {};
 
@@ -222,31 +297,57 @@ class DualMapController {
     }
 
     /**
-     * Clone a layer for the secondary map
+     * Build a Leaflet layer for a given compare-mode entry. Always returns a
+     * *new* instance (both primary and secondary sides get their own) so the
+     * original registry layer is never touched — this matters because an
+     * entry may come from a stashed slot whose `leafletLayer` mustn't be
+     * silently reattached to the currently-active primary map.
+     *
+     * Entries from LayerControlPanel carry a live Leaflet layer in
+     * `leafletLayer`; CD entries instead carry `overlayUrl` + `overlayMeta`.
      */
-    _cloneLayer(entry) {
+    _cloneLayerEntry(entry) {
+        // CD entry: synthesize a fresh L.ImageOverlay from overlay metadata.
+        if (entry.type === 'change-detection') {
+            if (!entry.overlayUrl || !entry.overlayMeta) return null;
+            const meta = entry.overlayMeta;
+            let bounds;
+            if (meta.mode === 'local') {
+                const h = meta.height || 0;
+                const w = meta.width || 0;
+                bounds = [[0, 0], [h, w]];
+            } else if (meta.bounds) {
+                const [s, west, n, east] = meta.bounds;
+                bounds = [[s, west], [n, east]];
+            } else {
+                return null;
+            }
+            return L.imageOverlay(entry.overlayUrl, bounds, {
+                opacity: 1.0,
+                pane: 'dataPane',
+                crossOrigin: true,
+            });
+        }
+
         const layer = entry.leafletLayer;
         if (!layer) return null;
 
         try {
-            // L.imageOverlay
             if (layer instanceof L.ImageOverlay) {
                 return L.imageOverlay(layer._url, layer.getBounds(), {
                     opacity: layer.options.opacity || 1.0,
                     pane: 'dataPane',
-                    crossOrigin: true
+                    crossOrigin: true,
                 });
             }
 
-            // L.tileLayer
             if (layer instanceof L.TileLayer) {
                 return L.tileLayer(layer._url, {
                     ...layer.options,
-                    pane: 'dataPane'
+                    pane: 'dataPane',
                 });
             }
 
-            // GeoRasterLayer — check for georaster data
             if (layer.options && layer.options.georaster) {
                 const LayerCtor = window.GeoRasterLayer ||
                     (window.georaster && window.georaster.GeoRasterLayer) ||
@@ -257,103 +358,122 @@ class DualMapController {
                         opacity: layer.options.opacity || 0.7,
                         resolution: layer.options.resolution || 256,
                         pixelValuesToColorFn: layer.options.pixelValuesToColorFn,
-                        pane: 'dataPane'
+                        pane: 'dataPane',
                     });
                 }
             }
         } catch (e) {
-            console.warn(`Failed to clone layer ${entry.id}:`, e);
+            console.warn(`[DualMap] Failed to clone layer ${entry.id}:`, e);
         }
-
         return null;
     }
 
+    // Kept for backwards compatibility with `_handleLayerAdded` (it passes a
+    // synthetic entry with a live leafletLayer).
+    _cloneLayer(entry) {
+        return this._cloneLayerEntry({
+            ...entry,
+            type: entry.type || 'analysis',
+        });
+    }
+
     /**
-     * Assign a layer to a specific map side
+     * Store references to layers we added to each side so we can cleanly
+     * remove them when the user swaps selection or exits compare mode.
      */
-    assignLayer(layerId, side) {
-        const layers = this.layerPanel?.getCurrentLayers() || [];
-        const entry = layers.find(l => l.id === layerId);
+    _getSideDict(side) {
+        if (side === 'left') {
+            if (!this._leftMapLayers) this._leftMapLayers = {};
+            return this._leftMapLayers;
+        }
+        return this.secondaryMapLayers;
+    }
+
+    _getSideMap(side) {
+        return side === 'left' ? this.primaryMap : this.secondaryMap;
+    }
+
+    _getSideIdSet(side) {
+        return side === 'left' ? this.leftLayerIds : this.rightLayerIds;
+    }
+
+    _attachSide(side, entry) {
+        const map = this._getSideMap(side);
+        if (!map) return;
+        const clone = this._cloneLayerEntry(entry);
+        if (!clone) return;
+        this._getSideDict(side)[entry.id] = clone;
+        map.addLayer(clone);
+    }
+
+    _detachSide(side, layerId) {
+        const map = this._getSideMap(side);
+        const dict = this._getSideDict(side);
+        if (dict[layerId] && map) {
+            try { map.removeLayer(dict[layerId]); } catch (e) {}
+            delete dict[layerId];
+        }
+    }
+
+    _clearSide(side) {
+        const ids = [...this._getSideIdSet(side)];
+        for (const id of ids) {
+            this._getSideIdSet(side).delete(id);
+            this._detachSide(side, id);
+        }
+    }
+
+    _applyAssignment(layerId, side, { skipRender = false } = {}) {
+        const entry = this._findEntryById(layerId);
         if (!entry) return;
 
-        // Remove this layer from both sides first
-        this.leftLayerIds.delete(layerId);
-        this.rightLayerIds.delete(layerId);
+        // Exclusive per side: clear that side first.
+        this._clearSide(side);
+        this._getSideIdSet(side).add(layerId);
+        this._attachSide(side, entry);
 
-        // Remove clone from secondary if exists
-        if (this.secondaryMapLayers[layerId]) {
-            try { this.secondaryMap.removeLayer(this.secondaryMapLayers[layerId]); } catch (e) {}
-            delete this.secondaryMapLayers[layerId];
+        if (!skipRender) this._renderAssignmentUI();
+    }
+
+    /** Kept for any external callers. */
+    assignLayer(layerId, side) {
+        if (side === 'both') {
+            this._applyAssignment(layerId, 'left', { skipRender: true });
+            this._applyAssignment(layerId, 'right');
+        } else {
+            this._applyAssignment(layerId, side);
         }
-
-        // Remove from primary if needed
-        if (this.primaryMap.hasLayer(entry.leafletLayer)) {
-            this.primaryMap.removeLayer(entry.leafletLayer);
-        }
-
-        if (side === 'left') {
-            this._clearSide('left');
-            this.leftLayerIds.add(layerId);
-            if (!this.primaryMap.hasLayer(entry.leafletLayer)) {
-                this.primaryMap.addLayer(entry.leafletLayer);
-            }
-        } else if (side === 'right') {
-            this._clearSide('right');
-            this.rightLayerIds.add(layerId);
-            const clone = this._cloneLayer(entry);
-            if (clone && this.secondaryMap) {
-                this.secondaryMapLayers[layerId] = clone;
-                this.secondaryMap.addLayer(clone);
-            }
-        } else if (side === 'both') {
-            this._clearSide('left');
-            this._clearSide('right');
-            this.leftLayerIds.add(layerId);
-            this.rightLayerIds.add(layerId);
-            if (!this.primaryMap.hasLayer(entry.leafletLayer)) {
-                this.primaryMap.addLayer(entry.leafletLayer);
-            }
-            const clone = this._cloneLayer(entry);
-            if (clone && this.secondaryMap) {
-                this.secondaryMapLayers[layerId] = clone;
-                this.secondaryMap.addLayer(clone);
-            }
-        }
-
-        this._renderAssignmentUI();
     }
 
     /**
-     * Remove all layers from one side (exclusive selection helper)
+     * On deactivate we just drop every compare-mode clone. The original
+     * active-slot layers are still registered in `mapManager.analysisLayers`,
+     * so we just need to re-attach them to the primary map.
      */
-    _clearSide(side) {
-        const layers = this.layerPanel?.getCurrentLayers() || [];
-        if (side === 'left') {
-            for (const id of [...this.leftLayerIds]) {
-                this.leftLayerIds.delete(id);
-                const entry = layers.find(l => l.id === id);
-                if (entry && this.primaryMap.hasLayer(entry.leafletLayer)) {
-                    this.primaryMap.removeLayer(entry.leafletLayer);
-                }
+    _restoreLayersToPrimary() {
+        // Detach every clone we put on the primary during compare mode.
+        if (this._leftMapLayers) {
+            for (const id of Object.keys(this._leftMapLayers)) {
+                try { this.primaryMap.removeLayer(this._leftMapLayers[id]); } catch (e) {}
             }
-        } else {
-            for (const id of [...this.rightLayerIds]) {
-                this.rightLayerIds.delete(id);
-                if (this.secondaryMapLayers[id]) {
-                    try { this.secondaryMap.removeLayer(this.secondaryMapLayers[id]); } catch (e) {}
-                    delete this.secondaryMapLayers[id];
+            this._leftMapLayers = {};
+        }
+
+        // Re-attach the active-slot's registered analysis/tile/processed
+        // layers in case any were detached as a side-effect of compare mode.
+        const live = [
+            window.mapManager?.layers?.analysisLayers,
+            window.mapManager?.layers?.processedLayers,
+            window.mapManager?.layers?.tileLayers,
+        ];
+        for (const dict of live) {
+            if (!dict) continue;
+            for (const layer of Object.values(dict)) {
+                if (layer && this.primaryMap && !this.primaryMap.hasLayer(layer)) {
+                    this.primaryMap.addLayer(layer);
                 }
             }
         }
-    }
-
-    _restoreLayersToPrimary() {
-        const layers = this.layerPanel?.getCurrentLayers() || [];
-        layers.forEach(entry => {
-            if (entry.visible && !this.primaryMap.hasLayer(entry.leafletLayer)) {
-                this.primaryMap.addLayer(entry.leafletLayer);
-            }
-        });
     }
 
     _renderAssignmentUI() {
@@ -361,28 +481,45 @@ class DualMapController {
         const rightList = document.getElementById('right-map-layers');
         if (!leftList || !rightList) return;
 
-        const layers = this.layerPanel?.getCurrentLayers() || [];
+        const groups = this._gatherAllLayers();
 
         leftList.innerHTML = '';
         rightList.innerHTML = '';
 
-        if (layers.length === 0) {
+        const totalCount = groups.A.length + groups.B.length + groups.cd.length;
+        if (totalCount === 0) {
             leftList.innerHTML = '<div class="dual-layer-empty">No layers</div>';
             rightList.innerHTML = '<div class="dual-layer-empty">No layers</div>';
             return;
         }
 
-        layers.forEach(entry => {
-            const isLeft = this.leftLayerIds.has(entry.id);
-            const isRight = this.rightLayerIds.has(entry.id);
+        const SECTION_META = [
+            { key: 'A',  label: 'Time A',           className: 'dual-section-a' },
+            { key: 'B',  label: 'Time B',           className: 'dual-section-b' },
+            { key: 'cd', label: 'Change Detection', className: 'dual-section-cd' },
+        ];
 
-            // Create items for both lists
-            const leftItem = this._createAssignmentItem(entry, 'left', isLeft);
-            const rightItem = this._createAssignmentItem(entry, 'right', isRight);
+        for (const section of SECTION_META) {
+            const entries = groups[section.key];
+            if (!entries.length) continue;
+            leftList.appendChild(this._buildSection(section, entries, 'left'));
+            rightList.appendChild(this._buildSection(section, entries, 'right'));
+        }
+    }
 
-            leftList.appendChild(leftItem);
-            rightList.appendChild(rightItem);
-        });
+    _buildSection(section, entries, side) {
+        const wrap = document.createElement('div');
+        wrap.className = `dual-layer-section ${section.className}`;
+        const header = document.createElement('div');
+        header.className = 'dual-layer-section-header';
+        header.textContent = section.label;
+        wrap.appendChild(header);
+
+        for (const entry of entries) {
+            const isActive = this._getSideIdSet(side).has(entry.id);
+            wrap.appendChild(this._createAssignmentItem(entry, side, isActive));
+        }
+        return wrap;
     }
 
     _createAssignmentItem(entry, side, isActive) {
@@ -395,37 +532,13 @@ class DualMapController {
 
         item.addEventListener('click', () => {
             if (isActive) {
-                // Deselect: remove from this side
-                if (side === 'left') {
-                    this.leftLayerIds.delete(entry.id);
-                    if (this.primaryMap.hasLayer(entry.leafletLayer)) {
-                        this.primaryMap.removeLayer(entry.leafletLayer);
-                    }
-                } else {
-                    this.rightLayerIds.delete(entry.id);
-                    if (this.secondaryMapLayers[entry.id]) {
-                        try { this.secondaryMap.removeLayer(this.secondaryMapLayers[entry.id]); } catch (e) {}
-                        delete this.secondaryMapLayers[entry.id];
-                    }
-                }
+                // Deselect — just drop from this side.
+                this._getSideIdSet(side).delete(entry.id);
+                this._detachSide(side, entry.id);
+                this._renderAssignmentUI();
             } else {
-                // Exclusive selection: clear side first, then add this layer
-                this._clearSide(side);
-                if (side === 'left') {
-                    this.leftLayerIds.add(entry.id);
-                    if (!this.primaryMap.hasLayer(entry.leafletLayer)) {
-                        this.primaryMap.addLayer(entry.leafletLayer);
-                    }
-                } else {
-                    this.rightLayerIds.add(entry.id);
-                    const clone = this._cloneLayer(entry);
-                    if (clone && this.secondaryMap) {
-                        this.secondaryMapLayers[entry.id] = clone;
-                        this.secondaryMap.addLayer(clone);
-                    }
-                }
+                this._applyAssignment(entry.id, side);
             }
-            this._renderAssignmentUI();
         });
 
         return item;
@@ -437,32 +550,44 @@ class DualMapController {
             case 'tile': return '🗺️';
             case 'image': return '🛰️';
             case 'processed': return '🖼️';
+            case 'change-detection': return '🔀';
             default: return '📄';
         }
     }
 
     /**
      * Get the prefix category for live-updating layers.
-     * td-xxx → 'td', sam2-preview-xxx → 'sam2-preview'
+     * td-xxx → 'td', sam3-preview-xxx → 'sam3-preview', sam3-text-xxx → 'sam3-text', chg_xxx → 'chg'.
      * Used to match reassignment when IDs change between remove/add cycles.
      */
     _getLayerPrefix(id) {
         if (id.startsWith('td-')) return 'td';
-        if (id.startsWith('sam2-preview-')) return 'sam2-preview';
+        if (id.startsWith('sam3-preview-')) return 'sam3-preview';
+        if (id.startsWith('sam3-text-')) return 'sam3-text';
+        if (id.startsWith('chg_')) return 'chg';
         return null;
     }
 
     /**
-     * When a new layer is added while in compare mode,
-     * restore previous assignment by exact ID or prefix match.
+     * Re-build the side's clone when an underlying layer is re-added
+     * (typical trigger: TD threshold Apply, CD Apply, SAM3 re-run). We
+     * rebuild from the current entry registry so even CD layers (which
+     * aren't on the primary map) can restore correctly.
      */
+    _rebuildSideForLayer(id, side) {
+        // Drop the stale clone first.
+        this._detachSide(side, id);
+        const entry = this._findEntryById(id);
+        if (!entry) return;
+        this._attachSide(side, entry);
+    }
+
     _handleLayerAdded(detail) {
         if (!this.isActive || !detail || !detail.id) return;
 
         const id = detail.id;
         const prefix = this._getLayerPrefix(id);
 
-        // Check exact ID match first, then prefix match
         let pending = this._pendingReassignment[id];
         if (!pending && prefix && this._pendingPrefixReassignment[prefix]) {
             pending = this._pendingPrefixReassignment[prefix];
@@ -470,39 +595,31 @@ class DualMapController {
         }
 
         if (pending) {
-            // Restore previous left/right assignment (exclusive per side)
             if (pending._timer) clearTimeout(pending._timer);
             if (pending._prefixTimer) clearTimeout(pending._prefixTimer);
             delete this._pendingReassignment[id];
 
             if (pending.left) {
-                this._clearSide('left');
                 this.leftLayerIds.add(id);
+                this._rebuildSideForLayer(id, 'left');
             }
             if (pending.right) {
-                this._clearSide('right');
                 this.rightLayerIds.add(id);
-                // Re-clone for the secondary map using the NEW layer from the event
-                const fakeEntry = { id, leafletLayer: detail.layer, type: detail.type };
-                const clone = this._cloneLayer(fakeEntry);
-                if (clone && this.secondaryMap) {
-                    this.secondaryMapLayers[id] = clone;
-                    this.secondaryMap.addLayer(clone);
-                }
+                this._rebuildSideForLayer(id, 'right');
             }
-        } else if (!this.leftLayerIds.has(id) && !this.rightLayerIds.has(id)) {
-            // Brand new layer — default to left (primary) map, exclusive
-            this._clearSide('left');
-            this.leftLayerIds.add(id);
+
+            // Our clone policy means the newly-added layer should NOT stay
+            // on the primary map as a side-effect — we render via clones
+            // only. Detach `detail.layer` if it's there but we didn't pick
+            // left.
+            if (!pending.left && detail.layer && this.primaryMap?.hasLayer(detail.layer)) {
+                this.primaryMap.removeLayer(detail.layer);
+            }
         }
 
         this._renderAssignmentUI();
     }
 
-    /**
-     * When a layer is removed while in compare mode,
-     * save assignment by exact ID AND by prefix (for live-updating layers like td-, sam2-).
-     */
     _handleLayerRemoved(detail) {
         if (!this.isActive || !detail || !detail.id) return;
 
@@ -513,14 +630,12 @@ class DualMapController {
         if (wasLeft || wasRight) {
             const assignment = { left: wasLeft, right: wasRight };
 
-            // Save by exact ID
             const pending = { ...assignment };
             pending._timer = setTimeout(() => {
                 delete this._pendingReassignment[id];
             }, 500);
             this._pendingReassignment[id] = pending;
 
-            // Also save by prefix for layers with changing IDs (td-xxx, sam2-preview-xxx)
             const prefix = this._getLayerPrefix(id);
             if (prefix) {
                 const prefixPending = { ...assignment };
@@ -531,16 +646,12 @@ class DualMapController {
             }
         }
 
+        // Drop clones on both sides (even though only one typically has it).
+        if (this._leftMapLayers?.[id]) this._detachSide('left', id);
+        if (this.secondaryMapLayers?.[id]) this._detachSide('right', id);
         this.leftLayerIds.delete(id);
         this.rightLayerIds.delete(id);
 
-        // Remove clone from secondary map if exists
-        if (this.secondaryMapLayers[id]) {
-            try { this.secondaryMap.removeLayer(this.secondaryMapLayers[id]); } catch (e) {}
-            delete this.secondaryMapLayers[id];
-        }
-
-        // Don't re-render immediately — wait for potential re-add
         setTimeout(() => {
             if (!this._pendingReassignment[id]) {
                 this._renderAssignmentUI();

@@ -58,11 +58,28 @@ class TargetDetectionController {
 
         this.secondaryTargetMarkers = [];  // mirrors targetMarkers on secondary map (compare mode)
 
+        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.1
+        this._slotStash = { A: null, B: null };
+        // Slot the currently-pending detection was kicked off on — used to
+        // drop completions that arrive after the user has switched away.
+        this._detectOriginSlot = null;
+
         this.handleMapClick = this.handleMapClick.bind(this);
         this._handleContextMenu = this._handleContextMenu.bind(this);
 
-        // Sync markers when compare mode is toggled
-        window.addEventListener('comparemap:activated', () => this._syncMarkersToSecondary());
+        // Sync markers and click handlers when compare mode is toggled
+        window.addEventListener('comparemap:activated', () => {
+            this._syncMarkersToSecondary();
+            // If target selection is active, also attach to the new secondary map
+            if (this.targetSelectMode) {
+                const dmc = this.platform.dualMapController;
+                if (dmc?.secondaryMap) {
+                    dmc.secondaryMap.getContainer().classList.add('prompt-cursor');
+                    dmc.secondaryMap.on('click', this.handleMapClick);
+                    dmc.secondaryMap.getContainer().addEventListener('contextmenu', this._handleContextMenu);
+                }
+            }
+        });
         window.addEventListener('comparemap:deactivated', () => { this.secondaryTargetMarkers = []; });
     }
 
@@ -144,7 +161,7 @@ class TargetDetectionController {
                 <select id="td-algo">
                     ${this.algorithms.map(a => `<option value="${a.id}">${a.name}</option>`).join('')}
                 </select>
-                <button id="td-pick" class="td-btn ${this.targetSelectMode ? 'active' : ''}" title="Left-click: positive, Right-click: negative">📍 <span id="td-count">${this.targetPoints.length}</span></button>
+                <button id="td-pick" class="td-btn ${this.targetSelectMode ? 'active' : ''}" title="Left-click: positive, Right-click: negative">📍 <span id="td-count">${this.targetPoints.length + this.negativePoints.length}</span></button>
                 <button id="td-mode-toggle" class="td-btn td-mode-positive" title="Current: Positive (click to switch)">+</button>
                 <button id="td-undo" class="td-btn" title="Undo last point" ${this.clickHistory.length === 0 ? 'disabled' : ''}>↩</button>
                 <button id="td-clear" class="td-btn" title="Clear all points" ${this.clickHistory.length === 0 ? 'disabled' : ''}>🗑</button>
@@ -243,6 +260,7 @@ class TargetDetectionController {
     }
 
     hideUI() {
+        this.stopTargetSelection();
         const item = document.querySelector('.analysis-item.target-detection-option');
         if (!item) return;
         item.querySelector('.td-ui')?.remove();
@@ -269,38 +287,54 @@ class TargetDetectionController {
     }
 
     startTargetSelection() {
-        // Stop SAM2 selection if active (prevent both listening at once)
-        const sam2 = this.platform.sam2Controller;
-        if (sam2?.selectMode) {
-            sam2.stopSelection();
+        // Stop SAM3 selection if active (prevent both listening at once)
+        const sam3 = this.platform.sam3Controller;
+        if (sam3?.selectMode) {
+            sam3.stopSelection();
         }
 
         this.targetSelectMode = true;
         document.getElementById('td-pick')?.classList.add('active');
+
+        // Attach to primary map
         const map = this.getMap();
         if (map) {
             map.getContainer().classList.add('prompt-cursor');
             map.on('click', this.handleMapClick);
             map.getContainer().addEventListener('contextmenu', this._handleContextMenu);
-
-            // Attach click/contextmenu handlers to all existing interactive overlays
-            // so clicks on analysis layers pass through to target detection
             this._attachOverlayClickHandlers(map);
         }
+
+        // Also attach to secondary map if compare mode is active
+        const dmc = this.platform.dualMapController;
+        if (dmc?.isActive && dmc.secondaryMap) {
+            dmc.secondaryMap.getContainer().classList.add('prompt-cursor');
+            dmc.secondaryMap.on('click', this.handleMapClick);
+            dmc.secondaryMap.getContainer().addEventListener('contextmenu', this._handleContextMenu);
+        }
+
         this.platform.showNotification('Left-click: positive target, Right-click: negative', 'info');
     }
 
     stopTargetSelection() {
         this.targetSelectMode = false;
         document.getElementById('td-pick')?.classList.remove('active');
+
+        // Detach from primary map
         const map = this.getMap();
         if (map) {
             map.getContainer().classList.remove('prompt-cursor');
             map.off('click', this.handleMapClick);
             map.getContainer().removeEventListener('contextmenu', this._handleContextMenu);
-
-            // Clean up overlay click handlers
             this._detachOverlayClickHandlers();
+        }
+
+        // Detach from secondary map
+        const dmc = this.platform.dualMapController;
+        if (dmc?.isActive && dmc.secondaryMap) {
+            dmc.secondaryMap.getContainer().classList.remove('prompt-cursor');
+            dmc.secondaryMap.off('click', this.handleMapClick);
+            dmc.secondaryMap.getContainer().removeEventListener('contextmenu', this._handleContextMenu);
         }
     }
 
@@ -359,14 +393,26 @@ class TargetDetectionController {
         if (!this.targetSelectMode) return;
         e.preventDefault();
         e.stopPropagation();
-        // Convert DOM event to latlng
-        const map = this.getMap();
+        // Resolve the originating map from the event target so right-clicks
+        // on the secondary (right) map in compare mode don't get projected
+        // against the primary map's container.
+        const map = this._resolveMapFromEvent(e);
         if (!map) return;
+        const rect = map.getContainer().getBoundingClientRect();
         const latlng = map.containerPointToLatLng(L.point(
-            e.clientX - map.getContainer().getBoundingClientRect().left,
-            e.clientY - map.getContainer().getBoundingClientRect().top
+            e.clientX - rect.left,
+            e.clientY - rect.top
         ));
         this._addPoint(latlng, 'negative');
+    }
+
+    _resolveMapFromEvent(e) {
+        const dmc = this.platform.dualMapController;
+        const container = e.currentTarget;
+        if (dmc?.isActive && dmc.secondaryMap && container === dmc.secondaryMap.getContainer()) {
+            return dmc.secondaryMap;
+        }
+        return this.getMap();
     }
 
     handleMapClick(e) {
@@ -376,6 +422,8 @@ class TargetDetectionController {
 
     _addPoint(latlng, mode) {
         const isPositive = mode === 'positive';
+
+
         let pointData;
         if (this.isUploadedMode()) {
             // Convert lat/lng to pixel row/col for uploaded geo-referenced image
@@ -397,49 +445,48 @@ class TargetDetectionController {
 
         const map = this.getMap();
         if (map && window.L) {
-            const fillColor = isPositive ? '#22cc44' : '#ee3344';
-            const symbol = isPositive ? '+' : '−';
-
-            const marker = L.circleMarker([latlng.lat, latlng.lng], {
-                radius: 10,
-                fillColor: fillColor,
-                color: '#ffffff',
-                weight: 3,
-                opacity: 1,
-                fillOpacity: 1
-            }).addTo(map);
-
-            const label = L.marker([latlng.lat, latlng.lng], {
-                icon: L.divIcon({
-                    className: 'td-marker-number',
-                    html: `<span>${symbol}</span>`,
-                    iconSize: [20, 20],
-                    iconAnchor: [10, 10]
-                })
-            }).addTo(map);
-
+            const { marker, label } = this._createMarkerPair(latlng, isPositive, map);
             this.targetMarkers.push({ marker, label, mode: isPositive ? 'pos' : 'neg' });
 
             // Duplicate marker on secondary map if compare mode is active
             const dmc = this.platform.dualMapController;
             if (dmc?.isActive && dmc.secondaryMap) {
-                const marker2 = L.circleMarker([latlng.lat, latlng.lng], {
-                    radius: 10, fillColor: fillColor, color: '#ffffff',
-                    weight: 3, opacity: 1, fillOpacity: 1
-                }).addTo(dmc.secondaryMap);
-                const label2 = L.marker([latlng.lat, latlng.lng], {
-                    icon: L.divIcon({
-                        className: 'td-marker-number',
-                        html: `<span>${symbol}</span>`,
-                        iconSize: [20, 20], iconAnchor: [10, 10]
-                    })
-                }).addTo(dmc.secondaryMap);
-                this.secondaryTargetMarkers.push({ marker: marker2, label: label2 });
+                const { marker: m2, label: l2 } = this._createMarkerPair(latlng, isPositive, dmc.secondaryMap);
+                this.secondaryTargetMarkers.push({ marker: m2, label: l2 });
             }
         }
 
         this._updatePointCounts();
         this._autoDetect();
+    }
+
+    /**
+     * Create a marker + label pair for a target point on the given map.
+     */
+    _createMarkerPair(latlng, isPositive, targetMap) {
+        const fillColor = isPositive ? '#00bfff' : '#ff4444';
+        const borderColor = isPositive ? '#0088cc' : '#cc0000';
+        const symbol = isPositive ? '+' : '−';
+
+        const marker = L.circleMarker([latlng.lat, latlng.lng], {
+            radius: 6,
+            fillColor,
+            color: borderColor,
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+        }).addTo(targetMap);
+
+        const label = L.marker([latlng.lat, latlng.lng], {
+            icon: L.divIcon({
+                className: `td-marker-number ${isPositive ? 'td-positive' : 'td-negative'}`,
+                html: `<span>${symbol}</span>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            })
+        }).addTo(targetMap);
+
+        return { marker, label };
     }
 
     undoLastPoint() {
@@ -586,13 +633,22 @@ class TargetDetectionController {
         }
 
         this._detectAbort = false;
+        // Stamp the slot this run belongs to. If the user switches slots
+        // before completion, _handleDetectionResult drops the result.
+        this._detectOriginSlot = this.platform.currentSlot;
 
         try {
             const selectedBands = this.getSelectedBands();
             let endpoint, requestBody;
+            const isMLP = this.selectedAlgorithm === 'MLP_AMF' || this.selectedAlgorithm === 'MLP_ACE';
 
             if (imageInfo.uploaded) {
-                endpoint = '/api/local/uploaded/target-detection/run';
+                // MLP uses the streaming variant so the loss curve animates
+                // live; non-MLP algorithms run to completion without
+                // intermediate events.
+                endpoint = isMLP
+                    ? '/api/local/uploaded/target-detection/run-stream'
+                    : '/api/local/uploaded/target-detection/run';
                 requestBody = {
                     upload_id: imageInfo.upload_id,
                     target_points: this.targetPoints,
@@ -602,7 +658,9 @@ class TargetDetectionController {
                     selected_bands: selectedBands
                 };
             } else if (imageInfo.local) {
-                endpoint = '/api/local/target-detection/run';
+                endpoint = isMLP
+                    ? '/api/local/target-detection/run-stream'
+                    : '/api/local/target-detection/run';
                 requestBody = {
                     image_dir: imageInfo.image_dir,
                     algorithm_dir: imageInfo.algorithm_dir,
@@ -613,7 +671,8 @@ class TargetDetectionController {
                     selected_bands: selectedBands
                 };
             } else {
-                endpoint = '/api/target-detection/run';
+                // Satellite source — use SSE streaming for MLP algorithms.
+                endpoint = isMLP ? '/api/target-detection/run-stream' : '/api/target-detection/run';
                 requestBody = {
                     image_id: imageInfo.id,
                     bbox: imageInfo.bbox,
@@ -626,67 +685,11 @@ class TargetDetectionController {
                 };
             }
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody)
-            });
-
-            // If user clicked again while waiting, discard and re-run
-            if (this._detectAbort) {
-                this._detectPending = false;
-                this._autoDetect();
-                return;
-            }
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ detail: 'Detection failed' }));
-                throw new Error(errorData.detail || `Detection failed`);
-            }
-
-            const result = await response.json();
-
-            if (!result || !result.detection_id) {
-                throw new Error('Invalid response from server');
-            }
-
-            // Build result entry (live preview, not yet saved)
-            const resultEntry = {
-                id: result.detection_id,
-                algorithm: result.algorithm,
-                threshold: result.threshold,
-                min_val: result.min_val,
-                max_val: result.max_val,
-                detected_pixels: result.detected_pixels,
-                detection_percentage: result.detection_percentage,
-                detection_result: result.detection_result,
-                mask_result: result.mask_result,
-                charts: result.charts,
-                training_chart: result.training_chart || null,
-                showingMask: false,
-                visible: true
-            };
-
-            // Remove previous live overlay
-            this._hideLiveOverlay();
-
-            // Hide SAM2 preview overlay so it doesn't cover target detection result
-            const sam2 = this.platform.sam2Controller;
-            if (sam2?.currentOverlayId) {
-                sam2._hideCurrentPreview();
-            }
-
-            // Show as live overlay
-            this._currentLiveResult = resultEntry;
-            this._showOverlay(resultEntry.id, resultEntry.detection_result);
-            this._currentLiveOverlayId = `td-${resultEntry.id}`;
-
-            this._updatePointCounts();
-            this._setLiveStatus(`${result.algorithm} | ${result.detection_percentage}%`);
-
-            // Show training loss chart modal for MLP algorithms
-            if (result.training_chart) {
-                this._showTrainingChartModal(result.training_chart, result.algorithm);
+            // Any MLP run is now streaming regardless of image source.
+            if (isMLP) {
+                await this._runDetectionSSE(endpoint, requestBody);
+            } else {
+                await this._runDetectionFetch(endpoint, requestBody);
             }
 
         } catch (error) {
@@ -697,10 +700,194 @@ class TargetDetectionController {
         }
     }
 
+    async _runDetectionFetch(endpoint, requestBody) {
+        const isMLP = requestBody.algorithm === 'MLP_AMF' || requestBody.algorithm === 'MLP_ACE';
+        if (isMLP) {
+            this._setLiveStatus('Training...');
+            this._showLiveTrainingChart(requestBody.algorithm);
+        }
+
+        // Non-MLP algorithms (SAM/ACE/RXD/CEM/MF) have no training UI of their
+        // own — show the global loading overlay so the user has explicit feedback
+        // until the result image is on screen. MLP path keeps its bespoke chart.
+        const useGlobalLoader = !isMLP && this.platform && typeof this.platform.withLoading === 'function';
+
+        const runFetch = async () => {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            });
+
+            if (this._detectAbort) { this._detectPending = false; this._autoDetect(); return; }
+
+            if (!response.ok) {
+                if (isMLP) this._closeLiveTrainingChart();
+                const errorData = await response.json().catch(() => ({ detail: 'Detection failed' }));
+                throw new Error(errorData.detail || 'Detection failed');
+            }
+
+            const result = await response.json();
+
+            if (isMLP && result.training_chart) {
+                this._showStaticTrainingChart(result.training_chart, requestBody.algorithm);
+            } else if (isMLP) {
+                this._closeLiveTrainingChart();
+            }
+
+            this._handleDetectionResult(result);
+            // Hold the loading overlay until the analysis image actually paints.
+            if (result && result.detection_id) {
+                await this._awaitOverlayPaint(`td-${result.detection_id}`);
+            }
+        };
+
+        if (useGlobalLoader) {
+            const algo = requestBody.algorithm || 'detection';
+            await this.platform.withLoading(`Running target detection (${algo})...`, runFetch);
+        } else {
+            await runFetch();
+        }
+    }
+
+    /**
+     * Wait until the just-added analysis overlay's underlying <img> finishes
+     * decoding, so the loading UI doesn't disappear before the result is visible.
+     * Resolves either way; never rejects. 15s defensive timeout.
+     */
+    _awaitOverlayPaint(layerId) {
+        return new Promise(resolve => {
+            const layer = window.mapManager?.analysisLayers?.[layerId];
+            if (!layer || typeof layer.once !== 'function') return resolve();
+            const el = (typeof layer.getElement === 'function') ? layer.getElement() : null;
+            if (el && el.complete && el.naturalHeight > 0) return resolve();
+            let settled = false;
+            const finish = () => { if (settled) return; settled = true; resolve(); };
+            const t = setTimeout(finish, 15000);
+            layer.once('load',  () => { clearTimeout(t); finish(); });
+            layer.once('error', () => { clearTimeout(t); finish(); });
+        });
+    }
+
+    async _runDetectionSSE(endpoint, requestBody) {
+        this._setLiveStatus('Training...');
+        this._showLiveTrainingChart(requestBody.algorithm);
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Detection failed' }));
+            throw new Error(errorData.detail || 'Detection failed');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        // `eventType` persists across read() chunks. The final "done"
+        // event carries base64 overlays that easily exceed TCP chunk
+        // size, so "event: done" and its "data: ..." line often arrive
+        // in separate reads. A fresh chunk-local declaration would lose
+        // the event type before the data line is processed.
+        let eventType = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (this._detectAbort) { reader.cancel(); this._detectPending = false; this._autoDetect(); return; }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line in buffer
+
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ') && eventType) {
+                    const data = JSON.parse(line.slice(6));
+                    if (eventType === 'training') {
+                        this._updateLiveTrainingChart(data);
+                        this._setLiveStatus(`Training ${data.step}/${data.n_steps}`);
+                    } else if (eventType === 'done') {
+                        this._closeLiveTrainingChart();
+                        this._handleDetectionResult(data);
+                    } else if (eventType === 'error') {
+                        this._closeLiveTrainingChart();
+                        throw new Error(data.detail || 'Detection failed');
+                    }
+                    eventType = null;
+                }
+            }
+        }
+    }
+
+    _handleDetectionResult(result) {
+        if (!result || !result.detection_id) {
+            throw new Error('Invalid response from server');
+        }
+
+        // Drop completions whose origin slot is no longer active. Without
+        // this, an MLP_AMF training that finishes after the user clicked
+        // Time B would write into slot B's results.
+        const origin = this._detectOriginSlot;
+        this._detectOriginSlot = null;
+        if (origin && origin !== this.platform.currentSlot) {
+            this.platform.showNotification(
+                `Detection on Time ${origin} dropped — you switched slots mid-run.`,
+                'warning'
+            );
+            return;
+        }
+
+        const resultEntry = {
+            id: result.detection_id,
+            algorithm: result.algorithm,
+            threshold: result.threshold,
+            min_val: result.min_val,
+            max_val: result.max_val,
+            detected_pixels: result.detected_pixels,
+            detection_percentage: result.detection_percentage,
+            detection_result: result.detection_result,
+            mask_result: result.mask_result,
+            charts: result.charts,
+            showingMask: false,
+            visible: true
+        };
+
+        this._hideLiveOverlay();
+
+        const sam3 = this.platform.sam3Controller;
+        if (sam3?.currentOverlayId) { sam3._hideCurrentPreview(); }
+
+        resultEntry.slotId = this.platform.currentSlot;
+        this._currentLiveResult = resultEntry;
+        this._showOverlay(resultEntry.id, resultEntry.detection_result);
+        this._currentLiveOverlayId = `td-${resultEntry.id}`;
+
+        // Register so the layer is tracked, but mark hasMask=false until
+        // the user explicitly applies a threshold below — change-detection
+        // requires that explicit step before the result is selectable.
+        if (typeof this.platform.registerSlotAnalysis === 'function') {
+            this.platform.registerSlotAnalysis({
+                id: resultEntry.id,
+                type: 'detection',
+                name: `${result.algorithm || 'Target'} · ${String(resultEntry.id).slice(-6)}`,
+                hasMask: false,
+            });
+        }
+
+        this._updatePointCounts();
+        this._setLiveStatus(`${result.algorithm} | ${result.detection_percentage}%`);
+    }
+
     // ========== RESULT ITEM RENDERING ==========
     _renderResultItem(resultEntry) {
         const item = document.querySelector('.analysis-item.target-detection-option');
-        const resultsList = item?.querySelector('.td-results-list');
+        if (!item) return;
+        const resultsList = item.querySelector('.td-results-list');
         if (!resultsList) return;
 
         // Don't duplicate
@@ -719,7 +906,6 @@ class TargetDetectionController {
         resultItem.innerHTML = `
             <div class="td-result-header">
                 <img class="td-result-thumb" src="${r.detection_result?.preview_url || ''}" alt="${r.algorithm}" />
-                ${r.training_chart ? `<img class="td-training-thumb" src="${r.training_chart}" alt="Loss" title="Click to view training loss" />` : ''}
                 <div class="td-result-info">
                     <span class="td-result-name">${r.algorithm}</span>
                     <span class="td-result-status">Click to toggle overlay</span>
@@ -757,19 +943,9 @@ class TargetDetectionController {
         // Toggle overlay on header click
         resultItem.querySelector('.td-result-header').onclick = (e) => {
             if (e.target.closest('.td-result-actions')) return;
-            if (e.target.closest('.td-training-thumb')) return;
             e.stopPropagation();
             this._toggleOverlay(r.id);
         };
-
-        // Training chart thumbnail click → show modal
-        const trainingThumb = resultItem.querySelector('.td-training-thumb');
-        if (trainingThumb) {
-            trainingThumb.onclick = (e) => {
-                e.stopPropagation();
-                this._showTrainingChartModal(r.training_chart, r.algorithm);
-            };
-        }
 
         // Remove button
         resultItem.querySelector('.td-result-remove-btn').onclick = (e) => {
@@ -922,8 +1098,19 @@ class TargetDetectionController {
             resultEntry.detection_percentage = result.detection_percentage;
             resultEntry.showingMask = true;
 
+            // Re-register so change-detection sees the newest threshold's
+            // binary mask. hasMask stays true.
+            if (typeof this.platform.registerSlotAnalysis === 'function') {
+                this.platform.registerSlotAnalysis({
+                    id: resultEntry.id,
+                    type: 'detection',
+                    name: `${resultEntry.algorithm || 'Target'} · ${String(resultEntry.id).slice(-6)}`,
+                    hasMask: true,
+                });
+            }
+
             // Show mask overlay
-            this._showOverlay(resultEntry.id, result.mask_result);
+            this._showOverlay(resultEntry.id, result.mask_result, true);
 
             // Update UI
             if (resultItem) {
@@ -950,7 +1137,7 @@ class TargetDetectionController {
         return this._currentLiveResult && this._currentLiveResult.id === resultId;
     }
 
-    _showOverlay(resultId, overlayData) {
+    _showOverlay(resultId, overlayData, isBinary = false) {
         if (!overlayData?.overlay_url) return;
 
         // Remove existing for this result
@@ -962,9 +1149,9 @@ class TargetDetectionController {
 
         if (this.isLocalMode()) {
             const li = this.platform.localImage;
-            li?.showLocalAnalysisLayer(layerId, overlayData.overlay_url, li.preloadedSize.width, li.preloadedSize.height, displayName);
+            li?.showLocalAnalysisLayer(layerId, overlayData.overlay_url, li.preloadedSize.width, li.preloadedSize.height, displayName, isBinary);
         } else if (window.mapManager) {
-            window.mapManager.showAnalysisLayer(layerId, overlayData.overlay_url, displayName);
+            window.mapManager.showAnalysisLayer(layerId, overlayData.overlay_url, displayName, null, isBinary);
         }
 
         // Make overlay clickable for adding target points (both modes use mapManager in load-image)
@@ -1029,7 +1216,7 @@ class TargetDetectionController {
             }
         } else {
             const overlayData = entry.showingMask ? entry.mask_result : entry.detection_result;
-            this._showOverlay(resultId, overlayData);
+            this._showOverlay(resultId, overlayData, !!entry.showingMask);
             if (resultItem) {
                 resultItem.querySelector('.td-result-status').textContent = `${entry.algorithm} — Click to hide`;
             }
@@ -1056,6 +1243,117 @@ class TargetDetectionController {
         const item = document.querySelector('.analysis-item.target-detection-option');
         if (item) {
             item.classList.toggle('active', active);
+        }
+    }
+
+    // ========== Per-slot stash (Time A / Time B) ==========
+
+    _freezeToSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        this._slotStash[slotId] = {
+            results: this.results.slice(),
+            overlayLayers: { ...this.overlayLayers },
+            targetPoints: this.targetPoints.slice(),
+            negativePoints: this.negativePoints.slice(),
+            clickHistory: this.clickHistory.slice(),
+            targetMarkers: this.targetMarkers.slice(),
+            secondaryTargetMarkers: this.secondaryTargetMarkers.slice(),
+            _currentLiveResult: this._currentLiveResult,
+            _currentLiveOverlayId: this._currentLiveOverlayId,
+            _detectPending: this._detectPending,
+            selectedAlgorithm: this.selectedAlgorithm,
+            selectedBands: this.selectedBands,
+            clickMode: this.clickMode,
+        };
+
+        // Detach markers from both maps. Use the snapshot — don't call
+        // clearMarkers() which nukes the live arrays.
+        const primaryMap = this.getMap();
+        this._slotStash[slotId].targetMarkers.forEach(({ marker, label }) => {
+            if (marker && primaryMap?.hasLayer?.(marker)) primaryMap.removeLayer(marker);
+            if (label && primaryMap?.hasLayer?.(label)) primaryMap.removeLayer(label);
+        });
+        const dmc = this.platform.dualMapController;
+        if (dmc?.secondaryMap) {
+            this._slotStash[slotId].secondaryTargetMarkers.forEach(({ marker, label }) => {
+                if (marker && dmc.secondaryMap.hasLayer?.(marker)) dmc.secondaryMap.removeLayer(marker);
+                if (label && dmc.secondaryMap.hasLayer?.(label)) dmc.secondaryMap.removeLayer(label);
+            });
+        }
+
+        // The live-training modal lives under <body>, not inside .td-ui, so
+        // showAnalysisResults doesn't tear it down. Close it on freeze.
+        if (typeof this._closeLiveTrainingChart === 'function') {
+            try { this._closeLiveTrainingChart(); } catch (e) { /* no-op */ }
+        }
+    }
+
+    _thawFromSlot(slotId) {
+        const stash = (slotId === 'A' || slotId === 'B') ? this._slotStash[slotId] : null;
+        if (stash) {
+            this.results = Array.isArray(stash.results) ? stash.results.slice() : [];
+            this.overlayLayers = { ...(stash.overlayLayers || {}) };
+            this.targetPoints = Array.isArray(stash.targetPoints) ? stash.targetPoints.slice() : [];
+            this.negativePoints = Array.isArray(stash.negativePoints) ? stash.negativePoints.slice() : [];
+            this.clickHistory = Array.isArray(stash.clickHistory) ? stash.clickHistory.slice() : [];
+            this.targetMarkers = Array.isArray(stash.targetMarkers) ? stash.targetMarkers.slice() : [];
+            this.secondaryTargetMarkers = Array.isArray(stash.secondaryTargetMarkers)
+                ? stash.secondaryTargetMarkers.slice() : [];
+            this._currentLiveResult = stash._currentLiveResult || null;
+            this._currentLiveOverlayId = stash._currentLiveOverlayId || null;
+            this._detectPending = !!stash._detectPending;
+            this.selectedAlgorithm = stash.selectedAlgorithm || this.selectedAlgorithm;
+            this.selectedBands = stash.selectedBands;
+            this.clickMode = stash.clickMode || 'positive';
+
+            // Re-attach markers to the (new) current map.
+            const primaryMap = this.getMap();
+            if (primaryMap) {
+                this.targetMarkers.forEach(({ marker, label }) => {
+                    if (marker && !primaryMap.hasLayer?.(marker)) marker.addTo(primaryMap);
+                    if (label && !primaryMap.hasLayer?.(label)) label.addTo(primaryMap);
+                });
+            }
+            const dmc = this.platform.dualMapController;
+            if (dmc?.isActive && dmc.secondaryMap) {
+                this.secondaryTargetMarkers.forEach(({ marker, label }) => {
+                    if (marker && !dmc.secondaryMap.hasLayer?.(marker)) marker.addTo(dmc.secondaryMap);
+                    if (label && !dmc.secondaryMap.hasLayer?.(label)) label.addTo(dmc.secondaryMap);
+                });
+            } else {
+                // Compare mode was turned off while away — drop any stale refs
+                // so they don't reappear the next time compare is toggled.
+                this.secondaryTargetMarkers = [];
+            }
+
+            this._slotStash[slotId] = null;
+        } else {
+            // First visit to this slot — fresh state.
+            this.results = [];
+            this.overlayLayers = {};
+            this.targetPoints = [];
+            this.negativePoints = [];
+            this.clickHistory = [];
+            this.targetMarkers = [];
+            this.secondaryTargetMarkers = [];
+            this._currentLiveResult = null;
+            this._currentLiveOverlayId = null;
+            this._detectPending = false;
+            this.clickMode = 'positive';
+        }
+    }
+
+    handleSlotChange(oldSlot, newSlot) {
+        if (oldSlot === newSlot) return;
+        this.stopTargetSelection();
+        this._freezeToSlot(oldSlot);
+        this._thawFromSlot(newSlot);
+        const item = document.querySelector('.analysis-item.target-detection-option');
+        const list = item?.querySelector('.td-results-list');
+        if (list) {
+            list.innerHTML = '';
+            this.results.forEach(r => this._renderResultItem(r));
+            if (typeof this._updatePointCounts === 'function') this._updatePointCounts();
         }
     }
 
@@ -1104,21 +1402,8 @@ class TargetDetectionController {
         this.targetMarkers.forEach(item => {
             const latlng = item.marker.getLatLng();
             const isPositive = item.mode === 'pos';
-            const fillColor = isPositive ? '#22cc44' : '#ee3344';
-            const symbol = isPositive ? '+' : '−';
-
-            const marker2 = L.circleMarker([latlng.lat, latlng.lng], {
-                radius: 10, fillColor: fillColor, color: '#ffffff',
-                weight: 3, opacity: 1, fillOpacity: 1
-            }).addTo(dmc.secondaryMap);
-            const label2 = L.marker([latlng.lat, latlng.lng], {
-                icon: L.divIcon({
-                    className: 'td-marker-number',
-                    html: `<span>${symbol}</span>`,
-                    iconSize: [20, 20], iconAnchor: [10, 10]
-                })
-            }).addTo(dmc.secondaryMap);
-            this.secondaryTargetMarkers.push({ marker: marker2, label: label2 });
+            const { marker: m2, label: l2 } = this._createMarkerPair(latlng, isPositive, dmc.secondaryMap);
+            this.secondaryTargetMarkers.push({ marker: m2, label: l2 });
         });
     }
 
@@ -1126,28 +1411,102 @@ class TargetDetectionController {
         this.reset();
     }
 
-    // ========== TRAINING CHART MODAL ==========
-    _showTrainingChartModal(chartUrl, algorithm) {
-        // Remove existing modal
-        document.querySelector('.td-training-modal')?.remove();
+    // ========== LIVE TRAINING CHART ==========
+
+    _showLiveTrainingChart(algorithm) {
+        this._closeLiveTrainingChart();
 
         const modal = document.createElement('div');
         modal.className = 'td-training-modal';
+        modal.id = 'td-live-training-modal';
         modal.innerHTML = `
-            <div class="td-training-modal-backdrop"></div>
-            <div class="td-training-modal-content">
+            <div class="td-training-modal-content td-training-live">
                 <div class="td-training-modal-header">
-                    <span>${algorithm} Training Loss</span>
-                    <button class="td-training-modal-close">✕</button>
+                    <span>${algorithm} Training</span>
+                    <span class="td-training-step" id="td-training-step">0 / ?</span>
                 </div>
-                <img src="${chartUrl}" alt="Training Loss Curve" />
+                <div class="td-training-chart-wrap">
+                    <canvas id="td-live-loss-canvas"></canvas>
+                </div>
+                <div class="td-training-loss-value" id="td-training-loss-value">Loss: —</div>
             </div>
         `;
-
         document.body.appendChild(modal);
 
-        const close = () => modal.remove();
-        modal.querySelector('.td-training-modal-close').onclick = close;
-        modal.querySelector('.td-training-modal-backdrop').onclick = close;
+        const ctx = document.getElementById('td-live-loss-canvas').getContext('2d');
+        this._liveChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Loss',
+                    data: [],
+                    borderColor: '#7c4dff',
+                    backgroundColor: 'rgba(124, 77, 255, 0.08)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 0 },
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { title: { display: true, text: 'Step', font: { size: 11 } }, ticks: { font: { size: 10 } } },
+                    y: { title: { display: true, text: 'Loss', font: { size: 11 } }, ticks: { font: { size: 10 } }, beginAtZero: false }
+                }
+            }
+        });
+    }
+
+    _updateLiveTrainingChart(data) {
+        if (!this._liveChart) return;
+
+        const history = data.loss_history || [];
+        this._liveChart.data.labels = history.map((_, i) => i + 1);
+        this._liveChart.data.datasets[0].data = history;
+        this._liveChart.update('none'); // no animation for speed
+
+        const stepEl = document.getElementById('td-training-step');
+        if (stepEl) stepEl.textContent = `${data.step} / ${data.n_steps}`;
+
+        const lossEl = document.getElementById('td-training-loss-value');
+        if (lossEl && data.loss != null) lossEl.textContent = `Loss: ${data.loss.toFixed(6)}`;
+    }
+
+    _showStaticTrainingChart(chartDataUri, algorithm) {
+        // Replace the live chart modal with the static image from backend
+        this._closeLiveTrainingChart();
+
+        const modal = document.createElement('div');
+        modal.className = 'td-training-modal';
+        modal.id = 'td-live-training-modal';
+        modal.innerHTML = `
+            <div class="td-training-modal-content td-training-live">
+                <div class="td-training-modal-header">
+                    <span>${algorithm} Training Complete</span>
+                    <button class="td-training-close-btn" title="Close">✕</button>
+                </div>
+                <div class="td-training-chart-wrap">
+                    <img src="${chartDataUri}" style="width:100%;height:100%;object-fit:contain;" />
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.querySelector('.td-training-close-btn')?.addEventListener('click', () => modal.remove());
+        // Auto-close after 5 seconds
+        setTimeout(() => modal.remove(), 5000);
+    }
+
+    _closeLiveTrainingChart() {
+        if (this._liveChart) {
+            this._liveChart.destroy();
+            this._liveChart = null;
+        }
+        document.getElementById('td-live-training-modal')?.remove();
     }
 }

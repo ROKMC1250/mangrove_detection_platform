@@ -39,11 +39,11 @@ GEE_DL_MAX_BYTES = 40 * 1024 * 1024  # 40 MiB hard limit
 GEE_DL_SAFETY = 0.90  # Safety multiplier
 MAX_PIXELS_DEFAULT = 1e13  # Default max pixels (10 trillion)
 
-# Bands to export for Sentinel-2 (all 12 bands for 13-channel model input)
+# Bands to export for Sentinel-2 (12 spectral bands).
 # B1=Coastal, B2=Blue, B3=Green, B4=Red, B5-B7=RedEdge, B8=NIR, B8A=NIR narrow, B9=WaterVapor, B11-B12=SWIR
-# Note: B1 and B9 are 60m resolution but will be resampled to 10m by GEE
-# Note: B10 (Cirrus) is not available in Sentinel-2 SR products
-# Total: 12 bands + 1 mask = 13 channels (matching model in_channels=13)
+# All bands are bicubic-resampled to 10m at download time (B1/B9 native 60m, B5-B7/B8A/B11/B12 native 20m).
+# Note: B10 (Cirrus) is not available in Sentinel-2 SR products.
+# The mangrove segmentation model (in_channels=13) auto-pads the missing 13th channel with zeros at inference.
 S2_BANDS = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11", "B12"]
 SELECTED_EXPORT_BANDS = S2_BANDS
 
@@ -117,12 +117,6 @@ PARALLEL_TILE_WORKERS = int(os.environ.get('PARALLEL_TILE_WORKERS', '6'))
 
 # ===== Epsilon for safe division =====
 SAFE_DIV_EPS = 1e-6
-
-# ===== EMIT Hyperspectral Configuration =====
-EMIT_COLLECTION = "NASA/EMIT/L2A_RFL"  # EMIT L2A Reflectance collection
-EMIT_BAND_COUNT = 285  # Approximate number of bands in EMIT
-EMIT_MAX_BANDS_TO_DOWNLOAD = 50  # Limit for band selection to prevent huge downloads
-
 
 def validate_service_account():
     """Validate that the service account key exists."""

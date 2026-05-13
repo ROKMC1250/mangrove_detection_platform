@@ -10,9 +10,9 @@ class SearchResultsController {
 
     showSearchResults(images, satellite = null) {
         const sat = satellite || this.platform.selectedSatellite || 's2';
-        const containerId = sat === 's1' ? 'inline-results-s1' : (sat === 'emit' ? 'inline-results-emit' : 'inline-results-s2');
-        const countId = sat === 's1' ? 'results-count-s1' : (sat === 'emit' ? 'results-count-emit' : 'results-count-s2');
-        const resultsId = sat === 's1' ? 'search-results-s1' : (sat === 'emit' ? 'search-results-emit' : 'search-results-s2');
+        const containerId = sat === 's1' ? 'inline-results-s1' : 'inline-results-s2';
+        const countId = sat === 's1' ? 'results-count-s1' : 'results-count-s2';
+        const resultsId = sat === 's1' ? 'search-results-s1' : 'search-results-s2';
         
         const inlineResults = document.getElementById(containerId);
         const resultsCount = document.getElementById(countId);

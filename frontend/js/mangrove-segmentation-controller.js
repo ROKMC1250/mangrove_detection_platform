@@ -13,6 +13,14 @@ class MangroveSegmentationController {
         this.platform = platformController;
         this.results = [];
         this.overlayLayers = {};
+
+        // Per-slot snapshot of results + overlay bookkeeping. Populated by
+        // _freezeToSlot when the user flips Time A / Time B. See plan
+        // /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.2.
+        this._slotStash = { A: null, B: null };
+        // Slot the currently-pending segmentation was kicked off on — used to
+        // drop completions that arrive after the user has switched away.
+        this._originSlot = null;
     }
 
     getImageInfo() {
@@ -91,6 +99,8 @@ class MangroveSegmentationController {
             return;
         }
 
+        this._originSlot = this.platform.currentSlot;
+
         const runBtn = document.getElementById('ms-run');
         const statusEl = this.itemEl?.querySelector('.ms-status');
 
@@ -100,16 +110,17 @@ class MangroveSegmentationController {
         }
         if (statusEl) {
             statusEl.style.display = 'block';
-            statusEl.textContent = 'Running mangrove segmentation... This may take a moment.';
+            statusEl.textContent = 'Running segmentation on GPU...';
             statusEl.className = 'ms-status running';
         }
 
         const useTta = document.getElementById('ms-tta')?.checked || false;
 
-        try {
+        const run = async () => {
             const response = await fetch('/api/mangrove-segmentation/run', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({
                     image_id: imageInfo.id,
                     bbox: imageInfo.bbox,
@@ -117,54 +128,121 @@ class MangroveSegmentationController {
                     use_tta: useTta,
                 })
             });
-
             if (!response.ok) {
-                const err = await response.json();
+                const err = await response.json().catch(() => ({}));
                 throw new Error(err.detail || `HTTP ${response.status}`);
             }
-
             const data = await response.json();
-
-            const resultEntry = {
-                id: data.segmentation_id,
-                min_val: data.min_val,
-                max_val: data.max_val,
-                detection_result: {
-                    preview_url: data.preview_url,
-                    overlay_url: data.overlay_url,
-                    colormap: data.colormap,
-                },
-                mask_result: null,
-                showingMask: false,
-                visible: false,
-            };
-
-            this.results.push(resultEntry);
-            this._renderResultItem(resultEntry);
-
-            // Auto-show probability map overlay
-            this._showOverlay(resultEntry.id, resultEntry.detection_result);
-
-            if (statusEl) {
-                statusEl.textContent = 'Segmentation complete!';
-                statusEl.className = 'ms-status success';
+            this._finishJob({ status: 'completed', result: data });
+            // _finishJob calls _showOverlay synchronously. Wait for paint so the
+            // global loading overlay holds until the user actually sees the result.
+            if (data && data.segmentation_id) {
+                await this._awaitOverlayPaint(`ms-${data.segmentation_id}`);
             }
+        };
 
-            this.platform.showNotification('Mangrove segmentation complete', 'success');
-
+        try {
+            if (this.platform && typeof this.platform.withLoading === 'function') {
+                await this.platform.withLoading(`Running mangrove segmentation${useTta ? ' (TTA)' : ''}...`, run);
+            } else {
+                await run();
+            }
         } catch (err) {
             console.error('Mangrove segmentation failed:', err);
+            this._finishJob({ status: 'error', error: err.message });
+        }
+    }
+
+    /** Resolve once the analysis overlay's <img> finishes decoding. 30s timeout (segmentation can take a while). */
+    _awaitOverlayPaint(layerId) {
+        return new Promise(resolve => {
+            const layer = window.mapManager?.analysisLayers?.[layerId];
+            if (!layer || typeof layer.once !== 'function') return resolve();
+            const el = (typeof layer.getElement === 'function') ? layer.getElement() : null;
+            if (el && el.complete && el.naturalHeight > 0) return resolve();
+            let settled = false;
+            const finish = () => { if (settled) return; settled = true; resolve(); };
+            const t = setTimeout(finish, 30000);
+            layer.once('load',  () => { clearTimeout(t); finish(); });
+            layer.once('error', () => { clearTimeout(t); finish(); });
+        });
+    }
+
+    _finishJob(status) {
+        const runBtn = document.getElementById('ms-run');
+        if (runBtn) {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run Segmentation';
+        }
+        const statusEl = this.itemEl?.querySelector('.ms-status');
+
+        if (status.status === 'error') {
             if (statusEl) {
-                statusEl.textContent = `Error: ${err.message}`;
+                statusEl.textContent = `Error: ${status.error || 'segmentation failed'}`;
                 statusEl.className = 'ms-status error';
             }
-            this.platform.showNotification(`Segmentation failed: ${err.message}`, 'error');
-        } finally {
-            if (runBtn) {
-                runBtn.disabled = false;
-                runBtn.textContent = 'Run Segmentation';
-            }
+            this.platform.showNotification(`Segmentation failed: ${status.error || 'unknown'}`, 'error');
+            return;
         }
+        const data = status.result;
+        if (!data) {
+            if (statusEl) {
+                statusEl.textContent = 'Completed but result missing.';
+                statusEl.className = 'ms-status error';
+            }
+            return;
+        }
+
+        const resultEntry = {
+            id: data.segmentation_id,
+            min_val: data.min_val,
+            max_val: data.max_val,
+            detection_result: {
+                preview_url: data.preview_url,
+                overlay_url: data.overlay_url,
+                colormap: data.colormap,
+            },
+            mask_result: null,
+            showingMask: false,
+            visible: false,
+        };
+
+        // Drop late completions that belong to the slot the user has since
+        // switched away from — otherwise we'd stamp the result into the wrong
+        // slot and leak it into the active-slot UI.
+        const origin = this._originSlot;
+        this._originSlot = null;
+        if (origin && origin !== this.platform.currentSlot) {
+            this.platform.showNotification(
+                `Mangrove segmentation on Time ${origin} dropped — you switched slots mid-run.`,
+                'warning'
+            );
+            return;
+        }
+
+        resultEntry.slotId = this.platform.currentSlot;
+        this.results.push(resultEntry);
+        this._renderResultItem(resultEntry);
+        this._showOverlay(resultEntry.id, resultEntry.detection_result);
+
+        // Make this result pickable in the Change Detection modal.
+        // Mangrove seg's initial run only produces a probability map — no
+        // binary mask yet, so hasMask starts false. It flips true once
+        // the user applies a threshold below.
+        if (typeof this.platform.registerSlotAnalysis === 'function') {
+            this.platform.registerSlotAnalysis({
+                id: resultEntry.id,
+                type: 'segmentation',
+                name: `Mangrove Seg · ${String(resultEntry.id).slice(-6)}`,
+                hasMask: false,
+            });
+        }
+
+        if (statusEl) {
+            statusEl.textContent = 'Segmentation complete!';
+            statusEl.className = 'ms-status success';
+        }
+        this.platform.showNotification('Mangrove segmentation complete', 'success');
     }
 
     // ========== RESULT RENDERING ==========
@@ -363,8 +441,19 @@ class MangroveSegmentationController {
             resultEntry.mask_result = result.mask_result;
             resultEntry.showingMask = true;
 
+            // Mark this analysis as having a binary mask now — change
+            // detection will pick it up on the next dropdown refresh.
+            if (typeof this.platform.registerSlotAnalysis === 'function') {
+                this.platform.registerSlotAnalysis({
+                    id: resultEntry.id,
+                    type: 'segmentation',
+                    name: `Mangrove Seg · ${String(resultEntry.id).slice(-6)}`,
+                    hasMask: true,
+                });
+            }
+
             // Show mask overlay
-            this._showOverlay(resultEntry.id, result.mask_result);
+            this._showOverlay(resultEntry.id, result.mask_result, true);
 
             // Update UI
             if (resultItem) {
@@ -387,7 +476,7 @@ class MangroveSegmentationController {
     }
 
     // ========== OVERLAY MANAGEMENT ==========
-    _showOverlay(resultId, overlayData) {
+    _showOverlay(resultId, overlayData, isBinary = false) {
         if (!overlayData?.overlay_url) return;
 
         this._hideOverlay(resultId);
@@ -395,7 +484,7 @@ class MangroveSegmentationController {
         const layerId = `ms-${resultId}`;
 
         if (window.mapManager) {
-            window.mapManager.showAnalysisLayer(layerId, overlayData.overlay_url, 'Mangrove Segmentation');
+            window.mapManager.showAnalysisLayer(layerId, overlayData.overlay_url, 'Mangrove Segmentation', null, isBinary);
             window.mapManager.outlineAOI();
         }
 
@@ -441,7 +530,7 @@ class MangroveSegmentationController {
             }
         } else {
             const overlayData = entry.showingMask ? entry.mask_result : entry.detection_result;
-            this._showOverlay(resultId, overlayData);
+            this._showOverlay(resultId, overlayData, !!entry.showingMask);
             if (resultItem) {
                 resultItem.querySelector('.ms-result-status').textContent = 'Overlay active — click to hide';
             }
@@ -455,5 +544,44 @@ class MangroveSegmentationController {
 
         const resultItem = document.querySelector(`.ms-result-item[data-result-id="${resultId}"]`);
         if (resultItem) resultItem.remove();
+    }
+
+    // ========== Per-slot stash (Time A / Time B) ==========
+
+    _freezeToSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        this._slotStash[slotId] = {
+            results: this.results.slice(),
+            overlayLayers: { ...this.overlayLayers },
+        };
+    }
+
+    _thawFromSlot(slotId) {
+        const stash = (slotId === 'A' || slotId === 'B') ? this._slotStash[slotId] : null;
+        if (stash) {
+            this.results = Array.isArray(stash.results) ? stash.results.slice() : [];
+            this.overlayLayers = { ...(stash.overlayLayers || {}) };
+            this._slotStash[slotId] = null;
+        } else {
+            this.results = [];
+            this.overlayLayers = {};
+        }
+    }
+
+    /**
+     * Swap results/overlay state between slots. DOM rebuild only happens if
+     * the `.ms-ui` panel is currently open — otherwise `showSetupUI` will
+     * rebuild from `this.results` on next open.
+     */
+    handleSlotChange(oldSlot, newSlot) {
+        if (oldSlot === newSlot) return;
+        this._freezeToSlot(oldSlot);
+        this._thawFromSlot(newSlot);
+        const list = document.querySelector(
+            '.analysis-item.mangrove-segmentation-option .ms-results-list');
+        if (list) {
+            list.innerHTML = '';
+            this.results.forEach(r => this._renderResultItem(r));
+        }
     }
 }

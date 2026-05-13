@@ -25,6 +25,7 @@ from ..core.config import (
     PROJECT_ROOT,
 )
 from ..utils.cache import cache_index_data
+from .gpu_compute import _GPU_LOCK
 
 # Try to import torch
 try:
@@ -52,6 +53,12 @@ _MODEL1_CFG = None
 _MODEL1_READY = False
 _MODEL1_ERROR = None
 _MODEL1_LOCK = threading.Lock()
+
+# GPU concurrency is handled at the session level (backend.services.session_gate):
+# only one browser session is admitted at a time, so concurrent GPU calls
+# from different users can't happen. _GPU_LOCK in gpu_compute.py still
+# protects against self-concurrent calls within the single active session.
+# _MODEL1_LOCK above protects one-shot model initialisation.
 
 # ===== Segmentation Model Default Configuration =====
 # Default model parameters loaded from model_config.yaml (via config.py)
@@ -375,10 +382,16 @@ def run_model1_inference(image_path: str, bbox: List[float], image_id: str,
         print(f"MODEL - Running inference on {image_path}")
         print(f"  patch_size={MODEL1_PATCH_SIZE}, overlap={MODEL1_OVERLAP}, channels={expected_channels}, TTA={actual_use_tta}")
 
-        prob_map, profile = _predict_large_image_mask(
-            _MODEL1, image_path, MODEL1_PATCH_SIZE, MODEL1_OVERLAP, _MODEL1_DEVICE,
-            expected_channels=expected_channels, use_tta=actual_use_tta
-        )
+        # Acquire the shared GPU lock so a long inference doesn't race with
+        # lightweight GPU ops (spectral index, colormap, upload) running on
+        # FastAPI threadpool threads. The segmentation job queue already
+        # prevents concurrent *segmentation* jobs; this extra lock covers
+        # inference-vs-other-GPU-work contention on the same VRAM.
+        with _GPU_LOCK:
+            prob_map, profile = _predict_large_image_mask(
+                _MODEL1, image_path, MODEL1_PATCH_SIZE, MODEL1_OVERLAP, _MODEL1_DEVICE,
+                expected_channels=expected_channels, use_tta=actual_use_tta
+            )
 
         return {
             'prob_map': prob_map,

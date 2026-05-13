@@ -1,5 +1,5 @@
 /**
- * ===== MANGROVE DETECTION PLATFORM =====
+ * ===== EARTHSCOPE =====
  * Google Maps Style Interface Controller
  * Slim facade that coordinates modular components
  */
@@ -10,28 +10,22 @@ class PlatformController {
         this.apiBaseUrl = '';
         console.log(`🔗 API Base URL: ${this.apiBaseUrl || 'Same origin (relative)'}`);
 
-        // Core state
-        this.currentImages = [];
-        this.s1Images = [];
-        this.s2Images = [];
-        this.selectedImageId = null;
-        this.currentSatelliteType = 's2';
-        this.selectedSatellite = 's2';
+        // Core state that is NOT slot-scoped.
         this.currentNotification = null;
         this._progressStop = false;
 
-        // Processed data
-        this.processedImageData = null;
-        this.currentProcessedImageId = null;
-        this.lastAnalysisResults = null;
-        this._modelMaskUrls = null;
-
-        // Change monitoring state
-        this.changeImages = [];
-        this.selectedChangeDates = new Set();
-        this.imagesByDate = {};
-        this.calendarCurrentYear = new Date().getFullYear();
-        this.calendarCurrentMonth = new Date().getMonth();
+        // Slot system for change detection (Time A / Time B).
+        // Almost all per-workflow state (search results, selection, processed
+        // raster context, analysis results) lives inside `_slots[currentSlot]`
+        // and is exposed through getters/setters further down so existing code
+        // (`platform.selectedImageId = ...`, `platform.s2Images[...]`, etc.)
+        // keeps working unchanged. Default slot = 'A', so a user who never
+        // touches Time B sees identical behaviour to the pre-slot platform.
+        this.currentSlot = 'A';
+        this._slots = {
+            A: PlatformController._freshSlotState(),
+            B: PlatformController._freshSlotState(),
+        };
 
         // S1 visualization state
         this.s1Channels = { r: 'VV', g: 'VH', b: 'VV' };
@@ -43,11 +37,318 @@ class PlatformController {
             '1': 'B2', '2': 'B3', '3': 'B4', '4': 'B5', '5': 'B6',
             '6': 'B7', '7': 'B8', '8': 'B8A', '9': 'B11'
         };
-        this._originalTileUrls = {};  // layerId -> { url, bounds } for RGB restore
+        // `_originalTileUrls` (layerId -> {url, bounds} for RGB restore) is
+        // slot-scoped — see getter/setter below.
 
         // Initialize modules
         this.initModules();
         this.init();
+    }
+
+    // ========== Slot system (Change Detection: Time A / Time B) ==========
+
+    static _freshSlotState() {
+        return {
+            // Processed image context (set by image-processor after a
+            // successful process-image call).
+            processedImageData: null,
+            currentProcessedImageId: null,
+            processedBbox: null,
+            processedGeometry: null,
+            // Analysis outputs that the Analysis panel renders.
+            lastAnalysisResults: null,
+            _modelMaskUrls: null,
+            // Change-detection registry: ordered list of analyses produced on
+            // this slot. Each controller (mangrove-seg / target-detection)
+            // calls `registerSlotAnalysis` after it receives a result id.
+            analyses: [],
+            // Search + selection state — everything the left panel shows.
+            selectedImageId: null,
+            s1Images: [],
+            s2Images: [],
+            currentImages: [],
+            currentSatelliteType: 's2',
+            selectedSatellite: 's2',
+            // For RGB-vis restore: layerId -> {url, bounds}.
+            _originalTileUrls: {},
+        };
+    }
+
+    /**
+     * Record an analysis result as belonging to the currently-active slot.
+     * The change-detection modal reads from here to populate its layer pickers.
+     */
+    registerSlotAnalysis({ id, type, name, hasMask }) {
+        if (!id) return;
+        const slot = this._slots?.[this.currentSlot];
+        if (!slot) return;
+        if (!Array.isArray(slot.analyses)) slot.analyses = [];
+        // Dedupe: if the same id is re-registered (e.g. re-apply threshold
+        // keeps the same segmentation_id), update fields in place. `hasMask`
+        // is sticky-true: once an analysis has produced a binary mask we
+        // never flip it back to false on subsequent registrations.
+        const existing = slot.analyses.find(a => a.id === id);
+        if (existing) {
+            if (name) existing.name = name;
+            if (type) existing.type = type;
+            if (hasMask === true) existing.hasMask = true;
+            else if (hasMask === false && existing.hasMask !== true) existing.hasMask = false;
+        } else {
+            slot.analyses.push({
+                id,
+                type: type || 'unknown',
+                name: name || id,
+                hasMask: hasMask === true,
+                slotId: this.currentSlot,
+                createdAt: Date.now(),
+            });
+        }
+        this._updateSlotToolbar();
+    }
+
+    getSlotAnalyses(slotId) {
+        return this._slots?.[slotId]?.analyses || [];
+    }
+
+    get processedImageData() { return this._slots?.[this.currentSlot]?.processedImageData ?? null; }
+    set processedImageData(v) { if (this._slots) this._slots[this.currentSlot].processedImageData = v; }
+
+    get currentProcessedImageId() { return this._slots?.[this.currentSlot]?.currentProcessedImageId ?? null; }
+    set currentProcessedImageId(v) { if (this._slots) this._slots[this.currentSlot].currentProcessedImageId = v; }
+
+    get lastAnalysisResults() { return this._slots?.[this.currentSlot]?.lastAnalysisResults ?? null; }
+    set lastAnalysisResults(v) { if (this._slots) this._slots[this.currentSlot].lastAnalysisResults = v; }
+
+    get _modelMaskUrls() { return this._slots?.[this.currentSlot]?._modelMaskUrls ?? null; }
+    set _modelMaskUrls(v) { if (this._slots) this._slots[this.currentSlot]._modelMaskUrls = v; }
+
+    // Search / selection — per-slot so the left panel remembers what each
+    // slot has searched and picked.
+    get selectedImageId() { return this._slots?.[this.currentSlot]?.selectedImageId ?? null; }
+    set selectedImageId(v) {
+        if (!this._slots) return;
+        this._slots[this.currentSlot].selectedImageId = v;
+        // Selection is part of what the slot toolbar subtitle shows, so any
+        // write (including `null` on deselect) should refresh the toolbar.
+        if (typeof this._updateSlotToolbar === 'function') this._updateSlotToolbar();
+    }
+
+    get s1Images() { return this._slots?.[this.currentSlot]?.s1Images ?? []; }
+    set s1Images(v) { if (this._slots) this._slots[this.currentSlot].s1Images = v; }
+
+    get s2Images() { return this._slots?.[this.currentSlot]?.s2Images ?? []; }
+    set s2Images(v) { if (this._slots) this._slots[this.currentSlot].s2Images = v; }
+
+    get currentImages() { return this._slots?.[this.currentSlot]?.currentImages ?? []; }
+    set currentImages(v) { if (this._slots) this._slots[this.currentSlot].currentImages = v; }
+
+    get currentSatelliteType() { return this._slots?.[this.currentSlot]?.currentSatelliteType ?? 's2'; }
+    set currentSatelliteType(v) { if (this._slots) this._slots[this.currentSlot].currentSatelliteType = v; }
+
+    get selectedSatellite() { return this._slots?.[this.currentSlot]?.selectedSatellite ?? 's2'; }
+    set selectedSatellite(v) { if (this._slots) this._slots[this.currentSlot].selectedSatellite = v; }
+
+    // Captured at processImage time; consumed as a fallback AOI by the
+    // segmentation / SAM3 / change-detection controllers when the live map
+    // AOI isn't available.
+    get processedBbox() { return this._slots?.[this.currentSlot]?.processedBbox ?? null; }
+    set processedBbox(v) { if (this._slots) this._slots[this.currentSlot].processedBbox = v; }
+
+    get processedGeometry() { return this._slots?.[this.currentSlot]?.processedGeometry ?? null; }
+    set processedGeometry(v) { if (this._slots) this._slots[this.currentSlot].processedGeometry = v; }
+
+    get _originalTileUrls() { return this._slots?.[this.currentSlot]?._originalTileUrls ?? {}; }
+    set _originalTileUrls(v) { if (this._slots) this._slots[this.currentSlot]._originalTileUrls = v; }
+
+    /**
+     * Return layer descriptors the Change Detection modal can show. Reads from
+     * the saved slot state (or the live state if asked about the active slot).
+     */
+    getSlotAnalysisLayers(slotId) {
+        const results = this._slots?.[slotId]?.lastAnalysisResults;
+        if (!results || typeof results !== 'object') return [];
+        return Object.entries(results).map(([modelId, r]) => ({
+            slotId,
+            modelId,
+            name: (r && r.name) || modelId,
+            segmentationId: r && r.segmentation_id,
+            detectionId: r && r.detection_id,
+        })).filter(r => r.segmentationId || r.detectionId);
+    }
+
+    /**
+     * Switch the active slot. Coordinates:
+     *   (1) freezes the live ImageSearchController view state into the old
+     *       slot, so when we thaw the new slot we don't leak A's list into B,
+     *   (2) swaps currentSlot (all getter/setter reads now target the new slot),
+     *   (3) thaws the new slot's ImageSearchController state and re-renders
+     *       the search list + satellite tabs + selected highlight,
+     *   (4) MapLayers swaps its analysis/processed/tile layer stash,
+     *   (5) analysis list re-renders with the new slot's results,
+     *   (6) UI toolbars reflect the active slot.
+     */
+    switchSlot(slotId) {
+        if (slotId !== 'A' && slotId !== 'B') return;
+        if (slotId === this.currentSlot) return;
+
+        const oldSlot = this.currentSlot;
+
+        // (1) Freeze ImageSearchController's live fields into the old slot —
+        // that controller owns its own `s1Images / s2Images / selectedImageId /
+        // currentSatellite` which are what `showSearchResults` renders from.
+        const is = this.imageSearch;
+        if (is) {
+            const cur = this._slots[oldSlot];
+            cur.s1Images = Array.isArray(is.s1Images) ? is.s1Images.slice() : [];
+            cur.s2Images = Array.isArray(is.s2Images) ? is.s2Images.slice() : [];
+            cur.selectedImageId = is.selectedImageId ?? null;
+            cur.currentSatelliteType = is.currentSatellite || cur.currentSatelliteType || 's2';
+            cur.selectedSatellite = cur.currentSatelliteType;
+        }
+
+        // (2) Flip the active slot. All getter-backed reads below now target
+        // the new slot's state.
+        this.currentSlot = slotId;
+
+        // (3) Thaw the new slot into ImageSearchController and re-render.
+        if (is) {
+            const next = this._slots[slotId];
+            is.s1Images = Array.isArray(next.s1Images) ? next.s1Images.slice() : [];
+            is.s2Images = Array.isArray(next.s2Images) ? next.s2Images.slice() : [];
+            is.selectedImageId = next.selectedImageId ?? null;
+            is.currentSatellite = next.currentSatelliteType || 's2';
+
+            try { is.showSearchResults(); } catch (e) { console.warn('[switchSlot] showSearchResults failed:', e); }
+            try { is.switchSatelliteResults(is.currentSatellite); } catch (e) { /* no-op */ }
+            if (typeof this.switchSatelliteContent === 'function') {
+                try { this.switchSatelliteContent(is.currentSatellite); } catch (e) { /* no-op */ }
+            }
+            // Re-apply `.selected` highlight on the image-item row that matches
+            // this slot's last selection — showSearchResults re-creates the
+            // DOM so the class needs to be stamped back on after render.
+            this._reapplySelectedImageHighlight();
+        }
+
+        // (4) Layer stash swap (segmentation/target-detection/etc overlays).
+        if (window.mapManager && window.mapManager.layers &&
+            typeof window.mapManager.layers.switchToSlot === 'function') {
+            window.mapManager.layers.switchToSlot(slotId);
+        }
+
+        // (5) Re-render the satellite analysis list for the new slot
+        //     (null → empty state). This wipes the old slot's
+        //     .td-ui / .ms-ui / .sa-ui / .sam3-ui children so the
+        //     per-controller handoffs below see a collapsed panel and their
+        //     DOM-rebuild branches cleanly no-op.
+        if (this.imageProcessorController &&
+            typeof this.imageProcessorController.showAnalysisResults === 'function') {
+            this.imageProcessorController.showAnalysisResults(this.lastAnalysisResults);
+        }
+
+        // (6) Local-image upload state is held by its own controller (its
+        //     overlays aren't registered with MapLayers), so it needs an
+        //     explicit hand-off. Runs AFTER (5) so that if this slot has a
+        //     local Analyze session, handleSlotChange can overwrite the
+        //     satellite empty-state with local entry points.
+        if (this.localImage && typeof this.localImage.handleSlotChange === 'function') {
+            try { this.localImage.handleSlotChange(oldSlot, slotId); }
+            catch (e) { console.warn('[switchSlot] localImage.handleSlotChange failed:', e); }
+        }
+
+        // (7) Freeze/thaw per-controller UI state (results, markers, charts).
+        //     Run AFTER (6) so any open sub-panel has been torn down by
+        //     showAnalysisResults — the controllers only rebuild DOM if their
+        //     specific `.xx-results-list` is still mounted. SpectralInspector
+        //     always rebuilds because its container lives in a separate tab.
+        //     mangroveSegmentation is lazy-created so the guard is meaningful.
+        const analysisHandoffs = [
+            this.targetDetection,
+            this.mangroveSegmentation,
+            this.sam3Controller,
+            this.spectralAnalysis,
+            this.spectralInspector,
+        ];
+        for (const c of analysisHandoffs) {
+            if (c && typeof c.handleSlotChange === 'function') {
+                try { c.handleSlotChange(oldSlot, slotId); }
+                catch (e) { console.warn('[switchSlot] handleSlotChange failed:', e); }
+            }
+        }
+
+        // (8) Toolbars.
+        this._updateSlotToolbar();
+    }
+
+    /** After re-rendering the search results list, put `.selected` back on
+     *  the row that matches this slot's remembered selection. */
+    _reapplySelectedImageHighlight() {
+        document.querySelectorAll('.image-item.selected').forEach(el => {
+            el.classList.remove('selected');
+        });
+        const id = this.selectedImageId;
+        if (!id) return;
+        const row = document.querySelector(`.image-item[data-image-id="${CSS.escape(String(id))}"]`);
+        if (row) row.classList.add('selected');
+    }
+
+    /** Reflect the current slot / change-detection readiness in the DOM. */
+    _updateSlotToolbar() {
+        // (a) Active class on every slot button in every toolbar.
+        document.querySelectorAll('.slot-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.slot === this.currentSlot);
+        });
+
+        // (b) Per-slot subtitle — show which image each slot has loaded so
+        // the user can recognise A vs B at a glance. Priority:
+        //   1. processed satellite image id (Analyze has been run)
+        //   2. uploaded local GeoTIFF filename
+        //   3. selectedImageId (picked in search list but not processed yet)
+        //   4. "empty"
+        // Mirror the same content into every `.slot-btn-sub` regardless of
+        // which toolbar (left or right) it belongs to.
+        const shortTail = (s, n = 22) => {
+            s = String(s);
+            return s.length > n ? '…' + s.slice(-(n - 2)) : s;
+        };
+        ['A', 'B'].forEach(slotId => {
+            const state = this._slots?.[slotId] || {};
+            const processedId = state.currentProcessedImageId;
+            const selectedId = state.selectedImageId;
+            const analysesCount = (state.analyses || []).length;
+            const localName = this.localImage?.getSlotUploadFilename?.(slotId) || null;
+
+            let label;
+            let italic = false;
+            if (processedId) {
+                const short = shortTail(processedId);
+                label = analysesCount > 0
+                    ? `${short} · ${analysesCount} analysis${analysesCount > 1 ? 'es' : ''}`
+                    : short;
+            } else if (localName) {
+                label = `local: ${shortTail(localName, 24)}`;
+            } else if (selectedId) {
+                label = `${shortTail(selectedId)} (not analyzed)`;
+                italic = true;
+            } else {
+                label = 'empty';
+                italic = true;
+            }
+
+            const subs = document.querySelectorAll(
+                `.slot-btn[data-slot="${slotId}"] .slot-btn-sub`
+            );
+            subs.forEach(sub => {
+                sub.textContent = label;
+                sub.classList.toggle('empty', italic);
+            });
+        });
+
+        // Change Detection is now a right-panel tab (same row as Analysis
+        // and Spectral Inspector). Enable it only when both slots have at
+        // least one analysis the diff endpoint can consume.
+        if (this.changeDetection && typeof this.changeDetection.updateTabAvailability === 'function') {
+            this.changeDetection.updateTabAvailability();
+        }
     }
 
     /**
@@ -84,11 +385,6 @@ class PlatformController {
             this.analysisController = new AnalysisController(this);
         }
 
-        // Initialize change monitoring controller (disabled)
-        // if (typeof ChangeMonitoringController !== 'undefined') {
-        //     this.changeMonitoring = new ChangeMonitoringController(this);
-        // }
-
         // Initialize custom visualization controller
         if (typeof CustomVisualizationController !== 'undefined') {
             this.customViz = new CustomVisualizationController(this);
@@ -104,9 +400,9 @@ class PlatformController {
             this.targetDetection = new TargetDetectionController(this);
         }
 
-        // Initialize SAM2 controller
-        if (typeof SAM2Controller !== 'undefined') {
-            this.sam2Controller = new SAM2Controller(this);
+        // Initialize SAM3 controller
+        if (typeof SAM3Controller !== 'undefined') {
+            this.sam3Controller = new SAM3Controller(this);
         }
 
         // Initialize spectral analysis controller
@@ -117,6 +413,9 @@ class PlatformController {
         // Initialize local image controller
         if (typeof LocalImageController !== 'undefined') {
             this.localImage = new LocalImageController(this);
+            // Expose globally so the symbology controller's rendering pipeline
+            // (`_applyRenderingToLocalOverlays`) can reach the live overlay element.
+            window.localImageController = this.localImage;
         }
 
         // Initialize spectral inspector
@@ -127,11 +426,26 @@ class PlatformController {
         // Initialize layer control panel
         if (typeof LayerControlPanel !== 'undefined' && window.mapManager) {
             this.layerControlPanel = new LayerControlPanel(window.mapManager);
+            // Expose on window so map-core's bringDataLayersToFront can
+            // defer to the user-controlled ordering instead of overriding it.
+            window.layerControlPanel = this.layerControlPanel;
+        }
+
+        // Initialize mask compositor — listens for `mask:registry-changed`
+        // emitted by the panel and renders a composite mask overlay on the map.
+        if (typeof MaskCompositor !== 'undefined' && window.mapManager && this.layerControlPanel) {
+            this.maskCompositor = new MaskCompositor(window.mapManager, this.layerControlPanel);
+            window.maskCompositor = this.maskCompositor;
         }
 
         // Initialize dual map controller
         if (typeof DualMapController !== 'undefined') {
             this.dualMapController = new DualMapController(this);
+        }
+
+        // Initialize change detection controller
+        if (typeof ChangeDetectionController !== 'undefined') {
+            this.changeDetection = new ChangeDetectionController(this);
         }
 
         console.log('📦 Modular controllers initialized');
@@ -142,13 +456,13 @@ class PlatformController {
 
         await this.loadConfig();
         this.setupEventListeners();
-        
+
         if (this.searchResultsController) {
             this.searchResultsController.setupDownloadDropdownClose();
         }
-        
+
         this.initializeDateInputs();
-        
+
         if (this.uiManager) {
             this.uiManager.setupTabControls();
             this.uiManager.setupRightPanelTabControls();
@@ -225,10 +539,29 @@ class PlatformController {
             });
         }
 
+        // Slot toggle (Time A / Time B) — new for change detection
+        document.querySelectorAll('.slot-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.dataset.slot;
+                if (target) this.switchSlot(target);
+            });
+        });
+        // Change Detection is now a right-panel tab; no separate button to wire.
+        // Initial toolbar sync (reflect default slot='A'; CD tab disabled).
+        this._updateSlotToolbar();
+
         // "Analyze →" buttons
         const openAnalysisBtn = document.getElementById('open-analysis-btn');
         if (openAnalysisBtn) {
             openAnalysisBtn.addEventListener('click', () => {
+                // Sentinel-1 has no spectral analysis pipeline — refuse even
+                // if the disabled flag somehow slipped out of sync (e.g.
+                // re-enabled by a previous S2 run, then user picked S1).
+                const sat = this.selectedSatelliteType || this.imageSearch?.selectedSatellite;
+                if (sat === 's1') {
+                    this.showNotification('Analysis is not available for Sentinel-1 images.', 'warning');
+                    return;
+                }
                 // Check if any image is displayed on the map
                 const tileLayers = window.mapManager?.tileLayers || {};
                 const hasImage = Object.keys(tileLayers).some(id => id.startsWith('preview-'));
@@ -351,15 +684,6 @@ class PlatformController {
             searchBtn.addEventListener('click', () => this.searchImages());
         }
 
-        // Change monitoring search (disabled)
-        // const changeSearchBtn = document.getElementById('search-change-images-btn');
-        // if (changeSearchBtn) {
-        //     changeSearchBtn.addEventListener('click', () => {
-        //         if (this.changeMonitoring) {
-        //             this.changeMonitoring.searchChangeImages();
-        //         }
-        //     });
-        // }
     }
 
     setupSatelliteTabs() {
@@ -448,8 +772,9 @@ class PlatformController {
         // Setup drag-and-drop for band selection
         this.setupBandDragDrop();
 
-        // Percentile sliders
-        this.setupPercentileSliders();
+        // Percentile-mode sliders are wired by SymbologyController (true percentile via
+        // /api/compute-stretch-stats). The legacy `setupPercentileSliders()` mapped slider
+        // % → fixed-range min/max and would now conflict with the new state machine.
 
         // Keyboard shortcut mode
         this.setupKeyboardShortcutMode();
@@ -544,45 +869,52 @@ class PlatformController {
     }
 
     setupKeyboardShortcutMode() {
-        const toggle = document.getElementById('keyboard-shortcut-toggle');
-        const slotsContainer = document.getElementById('keyboard-shortcut-slots');
-        if (!toggle || !slotsContainer) return;
+        // Per-satellite toggle state + map. Only the currently-visible satellite's panel
+        // can fire shortcuts (the other tab is hidden), so the keydown handler reads the
+        // active satellite via `this.currentSatelliteType`.
+        this.keyboardShortcutModes = this.keyboardShortcutModes || { s2: false, s1: false };
+        this.keyboardShortcutMaps  = this.keyboardShortcutMaps  || { s2: {}, s1: {} };
 
-        // Toggle handler
-        toggle.addEventListener('change', () => {
-            this.keyboardShortcutMode = toggle.checked;
-            slotsContainer.style.display = toggle.checked ? 'grid' : 'none';
-        });
+        const wirePanel = (prefix, toggleId, slotsId) => {
+            const toggle = document.getElementById(toggleId);
+            const slotsContainer = document.getElementById(slotsId);
+            if (!toggle || !slotsContainer) return;
 
-        // Drag-and-drop for shortcut slots
-        const slots = slotsContainer.querySelectorAll('.shortcut-slot');
-        slots.forEach(slot => {
-            slot.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                slot.classList.add('drag-over');
+            // Seed the map from the static markup so first-press works without drag-drop.
+            slotsContainer.querySelectorAll('.shortcut-slot').forEach(slot => {
+                const k = slot.dataset.key;
+                const b = slot.dataset.band;
+                if (k && b) this.keyboardShortcutMaps[prefix][k] = b;
             });
-            slot.addEventListener('dragleave', () => {
-                slot.classList.remove('drag-over');
-            });
-            slot.addEventListener('drop', (e) => {
-                e.preventDefault();
-                slot.classList.remove('drag-over');
-                const band = e.dataTransfer.getData('text/plain');
-                if (!band) return;
-                const label = slot.querySelector('.slot-band-label');
-                if (label) {
-                    label.textContent = band;
-                    label.dataset.band = band;
-                }
-                slot.dataset.band = band;
-                this.keyboardShortcutMap[slot.dataset.key] = band;
-            });
-        });
 
-        // Global keydown listener
+            toggle.addEventListener('change', () => {
+                this.keyboardShortcutModes[prefix] = toggle.checked;
+                slotsContainer.style.display = toggle.checked ? 'grid' : 'none';
+            });
+
+            slotsContainer.querySelectorAll('.shortcut-slot').forEach(slot => {
+                slot.addEventListener('dragover', (e) => { e.preventDefault(); slot.classList.add('drag-over'); });
+                slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+                slot.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    slot.classList.remove('drag-over');
+                    const band = e.dataTransfer.getData('text/plain');
+                    if (!band) return;
+                    const label = slot.querySelector('.slot-band-label');
+                    if (label) { label.textContent = band; label.dataset.band = band; }
+                    slot.dataset.band = band;
+                    this.keyboardShortcutMaps[prefix][slot.dataset.key] = band;
+                });
+            });
+        };
+
+        wirePanel('s2', 'keyboard-shortcut-toggle',    'keyboard-shortcut-slots');
+        wirePanel('s1', 's1-keyboard-shortcut-toggle', 's1-keyboard-shortcut-slots');
+
+        // Single global keydown listener — routes to the active satellite.
         document.addEventListener('keydown', (e) => {
-            if (!this.keyboardShortcutMode) return;
-            // Only when search tab is active
+            const sat = this.currentSatelliteType === 's1' ? 's1' : 's2';
+            if (!this.keyboardShortcutModes[sat]) return;
             const searchTab = document.getElementById('search-tab-content');
             if (!searchTab || !searchTab.classList.contains('active')) return;
             const tag = document.activeElement?.tagName;
@@ -600,7 +932,10 @@ class PlatformController {
     }
 
     async applyGrayscaleBand(key) {
-        const band = this.keyboardShortcutMap[key];
+        // Read from the per-satellite map populated in setupKeyboardShortcutMode.
+        const sat = this.currentSatelliteType === 's1' ? 's1' : 's2';
+        const map = (this.keyboardShortcutMaps && this.keyboardShortcutMaps[sat]) || this.keyboardShortcutMap || {};
+        const band = map[key];
         if (!band) return;
 
         // Visual feedback on the slot
@@ -634,11 +969,29 @@ class PlatformController {
 
         this.showNotification(`Band ${band} (key ${key})`, 'info', 2000);
 
-        // Capture original tile URLs before first grayscale switch
+        // Capture the *current* RGB URL on every grayscale switch so backtick later
+        // restores the user's most recent visualization (post-Apply), not the very
+        // first preview. We only refresh entries that point to actual RGB tiles —
+        // when the existing layer is already a grayscale (its URL was set by a prior
+        // grayscale switch), we leave the saved RGB intact.
         for (const layerId of layerIds) {
-            if (!this._originalTileUrls[layerId]) {
-                const existingLayer = tileLayers[layerId];
-                if (existingLayer && existingLayer._url) {
+            const existingLayer = tileLayers[layerId];
+            if (!existingLayer || !existingLayer._url) continue;
+            // The existingLayer URL is RGB iff we don't have a saved entry whose URL
+            // equals it (i.e., it hasn't been replaced by a grayscale yet) OR the
+            // saved entry refers to a different URL (Apply produced a fresh RGB).
+            const saved = this._originalTileUrls[layerId];
+            const currentMatchesSaved = saved && saved.url === existingLayer._url;
+            if (!saved || !currentMatchesSaved) {
+                // Either first capture, or a fresh RGB after an Apply — refresh.
+                // If currentMatchesSaved is true, the visible layer is the RGB we
+                // already have saved (no Apply since last restore) — nothing to do.
+                // If currentMatchesSaved is false, either:
+                //   (a) RGB URL changed (Apply happened) → save new RGB.
+                //   (b) Visible layer is a grayscale from previous press → keep saved.
+                // We can't easily distinguish (a) vs (b) by URL alone, so we use a
+                // marker on the tileLayer set when grayscale is applied below.
+                if (!existingLayer._isGrayscale) {
                     this._originalTileUrls[layerId] = {
                         url: existingLayer._url,
                         bounds: existingLayer.options.bounds
@@ -670,6 +1023,10 @@ class PlatformController {
                             layerId, data.tile_template, data.bounds,
                             `Grayscale ${band}: ${imageId}`
                         );
+                        // Mark the new layer so a follow-up grayscale press doesn't
+                        // mistakenly capture this URL as the "RGB to restore".
+                        const newLayer = window.mapManager.tileLayers?.[layerId];
+                        if (newLayer) newLayer._isGrayscale = true;
                     }
                 }
             } catch (error) {
@@ -690,6 +1047,10 @@ class PlatformController {
                     layerId, original.url, original.bounds,
                     `RGB: ${layerId.replace('preview-', '')}`
                 );
+                // Restored layer is RGB — clear the grayscale marker so the next
+                // grayscale press updates the saved entry if Apply changes RGB.
+                const newLayer = window.mapManager.tileLayers?.[layerId];
+                if (newLayer) newLayer._isGrayscale = false;
             }
         }
         this.showNotification('Restored RGB (~)', 'info', 2000);
@@ -707,9 +1068,6 @@ class PlatformController {
         console.log('[VIS] Available tile layers:', Object.keys(tileLayers));
         
         const layerIds = Object.keys(tileLayers).filter(id => {
-            // Skip change monitoring layers
-            if (id.startsWith('change-preview-')) return false;
-            
             if (!id.startsWith('preview-')) return false;
             
             // S1 images have IDs starting with S1A_ or S1B_ or contain S1
@@ -742,34 +1100,46 @@ class PlatformController {
                 
                 try {
                     const endpoint = satellite === 's1' ? '/api/get-s1-tile' : '/api/get-s2-tile-custom';
-                    const requestBody = {
+                    const symbology = window.symbology && window.symbology[satellite];
+                    const symbologyPatch = symbology ? symbology.getRequestPatch() : {};
+                    const requestBody = Object.assign({
                         item_id: imageId,
                         bbox: aoi.bbox,
                         geometry: aoi.geometry,
                         bands: visParams.bands,
                         min: visParams.min,
                         max: visParams.max
-                    };
+                    }, symbologyPatch);
 
+                    console.log(`[VIS] POST ${endpoint}`, requestBody);
                     const response = await fetch(endpoint, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(requestBody)
                     });
 
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.tile_template && window.mapManager) {
-                            // Remove old layer and add new one with updated visualization
-                            window.mapManager.hideTileLayer(layerId);
-                            window.mapManager.showTileLayer(
-                                layerId,
-                                data.tile_template,
-                                data.bounds,
-                                `${satellite.toUpperCase()}: ${imageId}`
-                            );
-                            successCount++;
-                        }
+                    if (!response.ok) {
+                        const errBody = await response.text().catch(() => '');
+                        console.error(`[VIS] ${endpoint} ${response.status}:`, errBody);
+                        continue;
+                    }
+                    const data = await response.json();
+                    if (data.tile_template && window.mapManager) {
+                        // Remove old layer and add new one with updated visualization
+                        window.mapManager.hideTileLayer(layerId);
+                        window.mapManager.showTileLayer(
+                            layerId,
+                            data.tile_template,
+                            data.bounds,
+                            `${satellite.toUpperCase()}: ${imageId}`
+                        );
+                        // Apply produces a fresh RGB — invalidate any stale grayscale
+                        // marker AND the saved RGB so the next grayscale press captures
+                        // this layer's URL as the new "RGB to restore".
+                        const newLayer = window.mapManager.tileLayers?.[layerId];
+                        if (newLayer) newLayer._isGrayscale = false;
+                        delete this._originalTileUrls[layerId];
+                        successCount++;
                     }
                 } catch (error) {
                     console.error(`Failed to update ${layerId}:`, error);
@@ -880,12 +1250,6 @@ class PlatformController {
             searchBtn.disabled = !hasAOI;
         }
 
-        // Enable/disable change monitoring search (disabled)
-        // const changeSearchBtn = document.getElementById('search-change-images-btn');
-        // if (changeSearchBtn) {
-        //     changeSearchBtn.disabled = !hasAOI;
-        // }
-        
         console.log(`AOI changed: hasAOI=${hasAOI}`);
     }
 
@@ -902,12 +1266,6 @@ class PlatformController {
         if (startDate) startDate.value = formatDate(oneMonthAgo);
         if (endDate) endDate.value = formatDate(today);
 
-        // Change monitoring dates
-        const changeStartDate = document.getElementById('change-start-date');
-        const changeEndDate = document.getElementById('change-end-date');
-        if (changeStartDate) changeStartDate.value = formatDate(oneMonthAgo);
-        if (changeEndDate) changeEndDate.value = formatDate(today);
-        
         // Cloud cover slider value display
         const cloudCoverSlider = document.getElementById('cloud-cover');
         const cloudCoverValue = document.getElementById('cloud-cover-value');
@@ -940,9 +1298,9 @@ class PlatformController {
         }
     }
 
-    showLoading(message = 'Processing...') {
+    showLoading(message = 'Processing...', canCancel = false) {
         if (this.uiManager) {
-            this.uiManager.showLoading(message);
+            this.uiManager.showLoading(message, canCancel);
         }
     }
 
@@ -958,15 +1316,30 @@ class PlatformController {
         }
     }
 
-    switchToAnalysisTab() {
-        if (this.uiManager) {
-            this.uiManager.switchToAnalysisTab();
+    /**
+     * Run an async analysis flow under a single loading overlay. The overlay stays
+     * visible for the duration of `fn` (the fetch + any image-paint awaits inside it),
+     * and is hidden in `finally`. Use this so users see one consistent loading
+     * indicator across target detection, spectral analysis, SAM3, segmentation, etc.
+     *
+     * Pattern:
+     *   await this.platform.withLoading('Running detection...', async () => {
+     *     const data = await fetch(...);
+     *     await window.mapManager.showAnalysisLayerAsync(id, url, name, bounds);
+     *   });
+     */
+    async withLoading(message, fn) {
+        this.showLoading(message, false);
+        try {
+            return await fn();
+        } finally {
+            this.hideLoading();
         }
     }
 
-    switchToChangeMonitoringTab() {
+    switchToAnalysisTab() {
         if (this.uiManager) {
-            this.uiManager.switchToChangeMonitoringTab();
+            this.uiManager.switchToAnalysisTab();
         }
     }
 
@@ -1279,16 +1652,6 @@ class PlatformController {
         if (this.thresholdController) {
             return this.thresholdController.togglePixelInspection(modelId, result, btn);
         }
-    }
-
-    // ===== Change Monitoring =====
-
-    startChangeMonitoring(modelId, result, btnElement) {
-        // Change monitoring disabled
-        // if (this.changeMonitoring) {
-        //     this.switchToChangeMonitoringTab();
-        //     this.showNotification('Switch to Change Monitoring tab to continue', 'info');
-        // }
     }
 
     // ===== Download Methods =====

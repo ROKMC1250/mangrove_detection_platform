@@ -15,12 +15,12 @@ class AnalysisController {
      */
     showAnalysisResults(analysisResults) {
         this.currentResults = analysisResults;
-        
+
         const analysisSection = document.getElementById('analysis-section');
         const analysisList = document.querySelector('.analysis-list');
-        
-        if (!analysisSection || !analysisList) {
-            console.error('Analysis section or list not found');
+
+        if (!analysisList) {
+            console.error('Analysis list not found');
             return;
         }
 
