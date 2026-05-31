@@ -29,7 +29,7 @@ class ChangeDetectionController {
                 id: 'diff',
                 title: 'Magnitude Diff |B − A|',
                 description: 'Per-pixel absolute difference; threshold the magnitude to get a change mask.',
-                gradient: 'linear-gradient(135deg, #e53935 0%, #fb8c00 100%)',
+                gradient: 'linear-gradient(135deg, #E7344C 0%, #060606 100%)',
                 icon: '🔀',
             },
             // Future methods add another entry here → another expandable box.

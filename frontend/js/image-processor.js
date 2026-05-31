@@ -182,6 +182,9 @@ class ImageProcessorController {
         // Mangrove Segmentation section
         this.addMangroveSegmentationOption(analysisList);
 
+        // Flood Segmentation section (Sentinel-1 only — controller self-guards on click)
+        this.addFloodSegmentationOption(analysisList);
+
         // SAM3 Segmentation section
         this.addSAM3Option(analysisList);
 
@@ -253,7 +256,7 @@ class ImageProcessorController {
         saItem.dataset.active = 'false';
 
         saItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #4CAF50 0%, #2196F3 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #E7344C 0%, #941E26 100%);">
                 <div class="custom-icon">📊</div>
             </div>
             <div class="analysis-info">
@@ -280,7 +283,7 @@ class ImageProcessorController {
         targetItem.dataset.active = 'false';
 
         targetItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #1565c0 0%, #00838f 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #060606 0%, #E7344C 100%);">
                 <div class="custom-icon td-icon-svg">
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
@@ -322,7 +325,7 @@ class ImageProcessorController {
         msItem.dataset.active = 'false';
 
         msItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #00897b 0%, #00bcd4 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #E7344C 0%, #EE8691 100%);">
                 <div class="custom-icon">🌿</div>
             </div>
             <div class="analysis-info">
@@ -347,6 +350,156 @@ class ImageProcessorController {
         analysisList.appendChild(msItem);
     }
 
+    /**
+     * S1 analyze flow: download the VV+VH GeoTIFF (with progress), then
+     * open the analysis sidebar with the Flood Segmentation option. Mirrors
+     * the S2 processImage flow so users see the same export-then-analyze
+     * cadence — by the time the right panel appears, the raster is already
+     * cached server-side, so clicking Run is pure inference.
+     */
+    async processS1Image(imageId) {
+        if (!imageId) {
+            this.platform.showNotification('Please select an image first', 'error');
+            return;
+        }
+
+        this.cancelCurrentRequest();
+        this._currentAbortController = new AbortController();
+        const signal = this._currentAbortController.signal;
+        const cancelHandler = () => { this.cancelCurrentRequest(); };
+        window.addEventListener('loadingCancelled', cancelHandler, { once: true });
+
+        this.platform.showLoading('Downloading Sentinel-1 GRD (VV+VH)...');
+
+        try {
+            const jobId = `${imageId}-${Date.now()}`;
+            this.platform._progressStop = false;
+            this.platform.pollProgress(jobId).catch((e) => {
+                console.error('[S1 PROCESS] Polling failed:', e);
+            });
+
+            const currentBbox = window.mapManager.getCurrentBounds();
+            const currentGeometry = window.mapManager.getCurrentGeoJSON()?.geometry;
+            this.platform.processedBbox = currentBbox;
+            this.platform.processedGeometry = currentGeometry;
+
+            const response = await fetch('/api/process-s1-image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    item_id: imageId,
+                    bbox: currentBbox,
+                    geometry: currentGeometry,
+                    job_id: jobId,
+                }),
+                signal: signal,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'S1 download failed');
+            }
+
+            this.platform.currentProcessedImageId = imageId;
+            this.platform.selectedImageId = imageId;
+
+            const slotState = this.platform._slots?.[this.platform.currentSlot];
+            if (slotState) slotState.analyses = [];
+            if (typeof this.platform._updateSlotToolbar === 'function') {
+                this.platform._updateSlotToolbar();
+            }
+
+            this._showS1AnalysisPanel(imageId);
+
+            this.platform.showNotification(
+                'Sentinel-1 ready. Open Flood Segmentation in the Analysis panel.',
+                'success'
+            );
+            this.platform._progressStop = true;
+            this.platform.hideLoading();
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('[S1 PROCESS] Cancelled by user');
+                this.platform._progressStop = true;
+                return;
+            }
+            console.error('S1 process error:', error);
+            this.platform.showNotification(`S1 download error: ${error.message}`, 'error');
+            this.platform._progressStop = true;
+            this.platform.hideLoading();
+        } finally {
+            this._currentAbortController = null;
+            window.removeEventListener('loadingCancelled', cancelHandler);
+        }
+    }
+
+    /**
+     * Populate the right-panel analysis-list with the Flood Segmentation
+     * option only. Internal — called after processS1Image finishes the
+     * download. Also retained as `showS1AnalysisPanel` for back-compat
+     * with any code path that wants the panel without a download.
+     */
+    _showS1AnalysisPanel(imageId) {
+        this.platform.lastAnalysisResults = {};
+        if (this.platform.uiManager) {
+            this.platform.uiManager.switchToAnalysisTab();
+        } else {
+            this.platform.switchToAnalysisTab();
+        }
+
+        const analysisList = document.querySelector('.analysis-list');
+        if (!analysisList) return;
+        analysisList.innerHTML = '';
+
+        this.platform.selectedImageId = imageId;
+
+        this.addFloodSegmentationOption(analysisList);
+
+        const note = document.createElement('div');
+        note.className = 'sa-hint';
+        note.style.cssText = 'padding:10px;color:#666;font-size:12px;';
+        note.textContent = 'Sentinel-1: only Flood Segmentation is available for SAR imagery.';
+        analysisList.appendChild(note);
+    }
+
+    /** @deprecated use processS1Image — kept for back-compat */
+    showS1AnalysisPanel(imageId) {
+        return this.processS1Image(imageId);
+    }
+
+    addFloodSegmentationOption(analysisList) {
+        const fsItem = document.createElement('div');
+        fsItem.className = 'analysis-item flood-segmentation-option';
+        fsItem.dataset.modelId = 'flood-segmentation';
+        fsItem.dataset.active = 'false';
+
+        fsItem.innerHTML = `
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #941E26 0%, #E7344C 60%, #EE8691 100%);">
+                <div class="custom-icon">🌊</div>
+            </div>
+            <div class="analysis-info">
+                <h4 class="analysis-title">Flood Segmentation</h4>
+                <div class="analysis-status inactive">Sentinel-1 VV · click to start</div>
+            </div>
+        `;
+
+        fsItem.onclick = (e) => {
+            if (e.target.closest('.ms-ui')) return;
+            try {
+                if (!this.platform.floodSegmentation) {
+                    this.platform.floodSegmentation = new FloodSegmentationController(this.platform);
+                }
+                this.platform.floodSegmentation.handleItemClick(fsItem);
+            } catch (err) {
+                console.error('Flood Segmentation error:', err);
+                this.platform.showNotification(`Flood Segmentation error: ${err.message}`, 'error');
+            }
+        };
+
+        analysisList.appendChild(fsItem);
+    }
+
     addSAM3Option(analysisList) {
         const sam3Item = document.createElement('div');
         sam3Item.className = 'analysis-item sam3-option';
@@ -354,7 +507,7 @@ class ImageProcessorController {
         sam3Item.dataset.active = 'false';
 
         sam3Item.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #7b1fa2 0%, #e91e63 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #1F1F1F 0%, #941E26 100%);">
                 <div class="custom-icon sam3-icon-svg">
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
                         <path d="M6 9l6 6 6-6"/>

@@ -112,6 +112,25 @@ DEFAULT_MODEL_PARAMS = _MODEL_CONFIG.get('default_model', {})
 # Legacy support
 MODEL1_LOG_DIR = MODEL_DIR
 
+# ===== Flood Segmentation Model Configuration (Sentinel-1 VV) =====
+FLOOD_REPO_DIR = os.path.join(PROJECT_ROOT, "repo", "flood_segmentation")
+FLOOD_MODEL_DIR = _MODEL_CONFIG.get('flood_model_dir', '') or os.path.join(
+    FLOOD_REPO_DIR, 'checkpoints', 'unetpp_vh_v1'
+)
+FLOOD_CHECKPOINT = _MODEL_CONFIG.get('flood_checkpoint', 'best.pt')
+FLOOD_PATCH_SIZE = int(_MODEL_CONFIG.get('flood_patch_size', 512))
+FLOOD_OVERLAP_PX = int(_MODEL_CONFIG.get('flood_overlap', 128))
+FLOOD_BATCH_SIZE = int(_MODEL_CONFIG.get('flood_batch_size', 4))
+FLOOD_BLEND_MODE = str(_MODEL_CONFIG.get('flood_blend_mode', 'gaussian'))
+FLOOD_SAR_DB_MIN = float(_MODEL_CONFIG.get('flood_sar_db_min', -30.0))
+FLOOD_SAR_DB_MAX = float(_MODEL_CONFIG.get('flood_sar_db_max', 10.0))
+FLOOD_MODEL_PARAMS = _MODEL_CONFIG.get('flood_model', {
+    'name': 'UnetPlusPlus',
+    'encoder_name': 'resnet34',
+    'in_channels': 3,
+    'classes': 1,
+})
+
 # ===== Parallel Processing =====
 PARALLEL_TILE_WORKERS = int(os.environ.get('PARALLEL_TILE_WORKERS', '6'))
 

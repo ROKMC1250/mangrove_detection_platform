@@ -554,14 +554,6 @@ class PlatformController {
         const openAnalysisBtn = document.getElementById('open-analysis-btn');
         if (openAnalysisBtn) {
             openAnalysisBtn.addEventListener('click', () => {
-                // Sentinel-1 has no spectral analysis pipeline — refuse even
-                // if the disabled flag somehow slipped out of sync (e.g.
-                // re-enabled by a previous S2 run, then user picked S1).
-                const sat = this.selectedSatelliteType || this.imageSearch?.selectedSatellite;
-                if (sat === 's1') {
-                    this.showNotification('Analysis is not available for Sentinel-1 images.', 'warning');
-                    return;
-                }
                 // Check if any image is displayed on the map
                 const tileLayers = window.mapManager?.tileLayers || {};
                 const hasImage = Object.keys(tileLayers).some(id => id.startsWith('preview-'));
@@ -569,10 +561,22 @@ class PlatformController {
                     this.showNotification('Display an image first by clicking it in search results', 'warning');
                     return;
                 }
-                // Trigger processing on the selected/displayed image
                 const imageId = this.selectedImageId || this.currentProcessedImageId;
                 if (!imageId) {
                     this.showNotification('Select an image first', 'warning');
+                    return;
+                }
+                // Sentinel-1 short-circuit: open the analysis sidebar with only
+                // Flood Segmentation populated. The S2 spectral pipeline is
+                // not applicable and would fail in the backend.
+                const sat = this.selectedSatelliteType || this.imageSearch?.selectedSatellite;
+                if (sat === 's1') {
+                    if (this.imageProcessorController
+                        && typeof this.imageProcessorController.processS1Image === 'function') {
+                        this.imageProcessorController.processS1Image(imageId);
+                    } else {
+                        this.showNotification('Flood Segmentation UI not loaded', 'error');
+                    }
                     return;
                 }
                 this.processImage(imageId);

@@ -1,0 +1,30 @@
+data:
+  data_path: datasets/sen1sen2_augmented
+  val_ratio: 0.2
+model:
+  classes: 1
+  encoder_name: resnet34
+  encoder_weights: None
+  in_channels: 3
+train:
+  batch_size: 4
+  blend_mode: gaussian
+  ckpt_interval: 20
+  cycle_mult: 1.5
+  cycle_period: 5000
+  epoch: 30
+  eval_per_epoch: 1
+  log_dir: logs
+  lr: 0.0001
+  lr_decay: 0.8
+  min_lr: 1.0e-08
+  model_path: logs/flood_vh/weights/best.pt
+  n_workers: 2
+  no_ddp: true
+  no_save: false
+  patience: 5
+  save_tile_vis: false
+  seed: 42
+  tile_overlap: 128
+  tile_size: 512
+  uid: logs/flood_vh

@@ -23,3 +23,23 @@ default_model:
   encoder_name: "mit_b2"      # 인코더 백본
   in_channels: 13             # 입력 채널 수 (Sentinel-2: 13밴드)
   classes: 1                  # 출력 클래스 수 (이진 분류: 1)
+
+
+# ============================================
+# Flood Segmentation Model (Sentinel-1 VV)
+# ============================================
+
+flood_model_dir: ""             # Empty = auto-resolve to repo/flood_segmentation/checkpoints/unetpp_aug_v1
+flood_checkpoint: "best.pt"
+flood_patch_size: 512
+flood_overlap: 128              # stride = patch_size - overlap = 384
+flood_batch_size: 4
+flood_blend_mode: "gaussian"    # gaussian | hanning | linear | none
+flood_sar_db_min: -30.0
+flood_sar_db_max: 10.0
+
+flood_model:
+  name: "UnetPlusPlus"
+  encoder_name: "resnet34"
+  in_channels: 3                # VV repeated to 3 channels
+  classes: 1

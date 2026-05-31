@@ -177,6 +177,38 @@ class MangroveSegmentationThresholdRequest(BaseModel):
 
 
 # =============================================================================
+# Flood Segmentation Schemas (Sentinel-1 VV, UNet++)
+# =============================================================================
+
+class FloodSegmentationRequest(BaseModel):
+    image_id: str
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    geometry: Optional[Dict] = None
+
+
+class FloodSegmentationThresholdRequest(BaseModel):
+    segmentation_id: str
+    min_threshold: float
+    max_threshold: float
+    bbox: List[float]
+
+
+class FloodEraseRegionRequest(BaseModel):
+    """User-dragged eraser box in EPSG:4326. All connected components
+    that have at least one pixel inside this region are removed from
+    the flood watermask."""
+    segmentation_id: str
+    lat_min: float
+    lng_min: float
+    lat_max: float
+    lng_max: float
+
+
+class FloodResetExclusionsRequest(BaseModel):
+    segmentation_id: str
+
+
+# =============================================================================
 # Change Detection Schemas
 # =============================================================================
 

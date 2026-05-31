@@ -253,7 +253,7 @@ class SearchResultsController {
 
     formatAnalysisData(analysisData) {
         if (!analysisData || analysisData.error) {
-            return `<span style="color: #d93025;">Error: ${analysisData?.error || 'Analysis failed'}</span>`;
+            return `<span style="color: #E7344C;">Error: ${analysisData?.error || 'Analysis failed'}</span>`;
         }
 
         let html = `<strong style="color: #34a853;">📊 ${analysisData.analysis_type}</strong><br>`;

@@ -674,7 +674,7 @@ class LayerControlPanel {
             flex: 1; min-width: 0;
             padding: 2px 6px;
             font-size: 12px; font-weight: 500;
-            border: 1px solid #1a73e8; border-radius: 4px;
+            border: 1px solid #E7344C; border-radius: 4px;
             background: #fff; color: #333;
             outline: none;
         `;
@@ -878,7 +878,7 @@ class LayerControlPanel {
         input.style.cssText = `
             flex: 1; min-width: 0;
             padding: 1px 4px; font-size: 11px;
-            border: 1px solid #1a73e8; border-radius: 3px;
+            border: 1px solid #E7344C; border-radius: 3px;
             background: #fff; color: #333; outline: none;
         `;
         nameEl.replaceWith(input);

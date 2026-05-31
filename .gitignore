@@ -7,6 +7,7 @@
 .env.test.local
 .env.production.local
 
+*.pt
 *.png
 *.tif
 *.jpg

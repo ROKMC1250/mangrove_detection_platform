@@ -18,6 +18,7 @@ from rasterio.io import MemoryFile
 from fastapi import APIRouter, HTTPException
 
 from .schemas import ProcessImageRequest
+from ..services.flood_inference import ensure_s1_raster_cached
 from ..core.config import S2_BANDS
 from ..core.progress import PROGRESS_TRACKER
 from ..services.earth_engine import (
@@ -387,4 +388,62 @@ def process_image(req: ProcessImageRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/process-s1-image")
+def process_s1_image(req: ProcessImageRequest):
+    """
+    Download a Sentinel-1 GRD (VV+VH) image and cache it for flood segmentation.
+
+    Mirrors the user-visible flow of /api/process-image but skips the
+    S2-specific spectral pipeline (NDVI, AlphaEarth, cloud mask). The
+    cached GeoTIFF is then consumed by /api/flood-segmentation/run.
+    """
+    t0 = time.time()
+    job_id = req.job_id or f"job-{int(t0)}"
+    print(f"PROCESS S1 IMAGE - Using job_id: {job_id}")
+
+    phases = [
+        ("Initialization", 5.0),
+        ("Download", 90.0),
+        ("Finalization", 5.0),
+    ]
+    PROGRESS_TRACKER.create_job(job_id, phases)
+
+    try:
+        PROGRESS_TRACKER.start_phase(job_id, "Initialization", total_steps=1)
+        PROGRESS_TRACKER.update_phase(job_id, "Initialization", 1, "Preparing S1 download")
+        PROGRESS_TRACKER.complete_phase(job_id, "Initialization", "Ready")
+
+        PROGRESS_TRACKER.start_phase(job_id, "Download", total_steps=1)
+        cached_path = ensure_s1_raster_cached(
+            image_id=req.item_id,
+            bbox=req.bbox,
+            geometry=req.geometry,
+            job_id=job_id,
+        )
+
+        PROGRESS_TRACKER.start_phase(job_id, "Finalization", total_steps=1)
+        with rasterio.open(cached_path) as src:
+            height, width = src.height, src.width
+            n_bands = src.count
+        PROGRESS_TRACKER.complete_phase(job_id, "Finalization", "Cached raster ready")
+
+        total = time.time() - t0
+        PROGRESS_TRACKER.complete_job(job_id, f'S1 ready in {total:.1f}s')
+
+        return {
+            'item_id': req.item_id,
+            'cached_path': cached_path,
+            'width': width,
+            'height': height,
+            'bands': n_bands,
+            'bbox': req.bbox,
+            'analysis_results': {},  # No S2-style spectral overlays for S1
+            'satellite': 'Sentinel-1',
+        }
+
+    except Exception as e:
+        PROGRESS_TRACKER.error_job(job_id, str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 

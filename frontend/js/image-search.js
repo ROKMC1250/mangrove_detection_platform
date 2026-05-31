@@ -339,10 +339,10 @@ class ImageSearchController {
         this.selectedSatellite = satellite;
         this.platform.selectedImageId = imageId;
         this.platform.selectedSatelliteType = satellite;
-        // Sentinel-1 has no spectral analysis path — keep the Analyze
-        // button locked while an S1 image is the active selection,
-        // regardless of which satellite tab is currently open.
-        this._setAnalyzeAvailable(satellite !== 's1');
+        // Analyze is enabled for both S1 and S2 now. S2 runs the full
+        // spectral pipeline; S1 takes a short-circuit path in script.js
+        // that just opens the analysis sidebar (Flood Segmentation only).
+        this._setAnalyzeAvailable(true);
 
         // Highlight selected item
         document.querySelectorAll('.image-item').forEach(item => {
@@ -434,16 +434,15 @@ class ImageSearchController {
     }
 
     /**
-     * Toggle the global "Analyze →" button. Sentinel-1 has no spectral
-     * analysis backend, so we lock the button while an S1 image is the
-     * active selection — see `viewImage` and the click guard in
-     * `script.js` which also rechecks at submit time.
+     * Toggle the global "Analyze →" button. Currently enabled for both
+     * S1 (Flood Segmentation only) and S2 (full spectral pipeline) —
+     * the script.js click handler branches on satellite type.
      */
     _setAnalyzeAvailable(enabled) {
         const btn = document.getElementById('open-analysis-btn');
         if (!btn) return;
         btn.disabled = !enabled;
-        btn.title = enabled ? '' : 'Analysis not available for Sentinel-1';
+        btn.title = enabled ? '' : 'Select an image first';
     }
 
     getSelectedImage() {

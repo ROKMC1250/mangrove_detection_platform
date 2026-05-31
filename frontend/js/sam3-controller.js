@@ -175,7 +175,7 @@ class SAM3Controller {
             <div class="sam3-point-info" style="font-size:11px; color:#888; padding:2px 4px;">
                 <span id="sam3-pos-count" style="color:#22cc44;">+${this.positivePoints.length}</span>
                 <span id="sam3-neg-count" style="color:#ee3344; margin-left:6px;">-${this.negativePoints.length}</span>
-                <span id="sam3-status" style="margin-left:8px; color:#7b1fa2;"></span>
+                <span id="sam3-status" style="margin-left:8px; color:#E7344C;"></span>
             </div>
         `;
 
@@ -220,7 +220,7 @@ class SAM3Controller {
                 <input id="sam3-thresh" type="range" min="0.3" max="0.95" step="0.05"
                        value="${this.textThreshold}" style="flex:1;" />
                 <span id="sam3-thresh-val">${this.textThreshold.toFixed(2)}</span>
-                <span id="sam3-text-status" style="margin-left:6px; color:#7b1fa2;"></span>
+                <span id="sam3-text-status" style="margin-left:6px; color:#E7344C;"></span>
             </div>
             <div id="sam3-text-instances" class="sam3-text-instances" style="margin-top:6px;"></div>
         `;
@@ -793,7 +793,7 @@ class SAM3Controller {
         const idx = this.savedMasks.indexOf(maskEntry) + 1;
         const colorChip = maskEntry.color_hex
             ? `background:${maskEntry.color_hex};`
-            : 'background: linear-gradient(135deg, #7b1fa2, #e91e63);';
+            : 'background: linear-gradient(135deg, #E7344C 0%, #941E26 100%);';
         const name = maskEntry.name || `SAM3 Mask ${idx}`;
 
         const maskItem = document.createElement('div');

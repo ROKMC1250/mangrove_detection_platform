@@ -827,7 +827,7 @@ class LocalImageController {
         if (!localMapEl) {
             localMapEl = document.createElement('div');
             localMapEl.id = 'local-map';
-            localMapEl.style.cssText = 'width:100%;height:100%;position:absolute;top:0;left:0;background:#1a1a2e;';
+            localMapEl.style.cssText = 'width:100%;height:100%;position:absolute;top:0;left:0;background:#060606;';
             mapEl.parentElement.appendChild(localMapEl);
         }
         localMapEl.style.display = 'block';
@@ -1805,7 +1805,7 @@ class LocalImageController {
         saItem.dataset.active = 'false';
 
         saItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #4CAF50 0%, #2196F3 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #E7344C 0%, #941E26 100%);">
                 <div class="custom-icon">📊</div>
             </div>
             <div class="analysis-info">
@@ -1854,7 +1854,7 @@ class LocalImageController {
         tdItem.dataset.modelId = 'target-detection';
         tdItem.dataset.active = 'false';
         tdItem.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #060606 0%, #E7344C 100%);">
                 <div class="custom-icon">🎯</div>
             </div>
             <div class="analysis-info">
@@ -1879,7 +1879,7 @@ class LocalImageController {
         sam3Item.dataset.modelId = 'sam3';
         sam3Item.dataset.active = 'false';
         sam3Item.innerHTML = `
-            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #7b1fa2 0%, #e91e63 100%);">
+            <div class="analysis-thumbnail custom-placeholder" style="background: linear-gradient(135deg, #1F1F1F 0%, #941E26 100%);">
                 <div class="custom-icon">
                     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="2">
                         <path d="M6 9l6 6 6-6"/>

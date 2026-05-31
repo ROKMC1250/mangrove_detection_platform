@@ -32,6 +32,7 @@ from .core.progress import PROGRESS_TRACKER
 from .services.earth_engine import init_earth_engine
 from .services.model_inference import init_model1, get_model1_status
 from .services.sam3_service import init_sam3, get_sam3_status
+from .services.flood_inference import init_flood_model, get_flood_model_status
 from .services.session_gate import SESSION_GATE
 
 # Import API routers
@@ -43,6 +44,7 @@ from .api import (
 )
 from .api.routes_target_detection import router as target_detection_router
 from .api.routes_mangrove_segmentation import router as mangrove_segmentation_router
+from .api.routes_flood_segmentation import router as flood_segmentation_router
 from .api.routes_change_detection import router as change_detection_router
 from .api.routes_local import router as local_router
 from .api.routes_sam3 import router as sam3_router
@@ -158,6 +160,7 @@ app.include_router(analysis_router)
 app.include_router(download_router)
 app.include_router(target_detection_router)
 app.include_router(mangrove_segmentation_router)
+app.include_router(flood_segmentation_router)
 app.include_router(change_detection_router)
 app.include_router(local_router)
 app.include_router(sam3_router)
@@ -312,6 +315,17 @@ async def on_startup():
     except Exception as e:
         print(f"⚠️  STARTUP - SAM3 initialization error: {e}")
         print("   Continuing without SAM3 - other features are still available")
+
+    # Initialize flood segmentation model (UNet++ on Sentinel-1 VV)
+    try:
+        flood_loaded = init_flood_model()
+        if flood_loaded:
+            print("✅ Flood segmentation model loaded successfully")
+        else:
+            print("⚠️  Flood segmentation model not available - continuing without it")
+    except Exception as e:
+        print(f"⚠️  STARTUP - Flood model initialization error: {e}")
+        print("   Continuing without flood segmentation - other features are still available")
 
 
 
