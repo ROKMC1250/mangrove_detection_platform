@@ -21,10 +21,20 @@ Server runs at `http://localhost:8000`. Frontend is served as static files at `/
 
 ### Required Environment Variables
 
-Set automatically by `run.sh`, or manually:
-- `EE_SERVICE_ACCOUNT_KEY` — path to GEE service account JSON (default: `backend/ee-service-account-key.json`)
-- `GCS_BUCKET` — Google Cloud Storage bucket name
-- `GCS_BUCKET_REGION` — GCS region (default: `asia-northeast3`)
+All deployment-specific settings live in `.env` at the project root (git-ignored;
+`.env.example` is the tracked template). `backend/core/config.py` loads it through
+`python-dotenv`, and `run.sh` / `run.bat` / `scripts/finish_sam3_setup.sh` source it
+so child processes and the Google client libraries see the same values. Real
+environment variables take precedence over the file.
+
+- `EE_SERVICE_ACCOUNT_KEY` — path to GEE service account JSON (default: `backend/ee-service-account-key.json`; relative paths resolve against the project root)
+- `EE_SERVICE_ACCOUNT` — service account address; when empty it is read from `client_email` in the key file
+- `GCS_BUCKET` / `GCS_BUCKET_REGION` — optional, only for server-side GeoTIFF export of large AOIs
+- `SAM3_CHECKPOINT_DIR`, `SAM3_BPE_PATH`, `MODEL_ROOT`, `LOCAL_BASE_DIR` — optional path overrides
+- `HTTP_POOL`, `PARALLEL_TILE_WORKERS` — download tuning
+
+Do not hardcode deployment values in source; add them to `.env.example` instead.
+`docs/` is git-ignored (local working notes) — user-facing documentation is `README.md`.
 
 ### Installing Dependencies
 
