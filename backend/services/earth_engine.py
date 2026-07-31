@@ -8,6 +8,7 @@ from datetime import timedelta
 
 import ee
 from google.cloud import storage
+from fastapi import HTTPException
 
 from ..core.config import (
     SERVICE_ACCOUNT_EMAIL,
@@ -16,22 +17,64 @@ from ..core.config import (
     validate_service_account,
 )
 
-# Global EE initialization flag
+# Global EE initialization state
 _EE_INITIALIZED = False
+_EE_ERROR: Optional[str] = None
 
 
 def init_earth_engine() -> bool:
-    """Initialize Earth Engine with service account credentials."""
-    global _EE_INITIALIZED
+    """Initialize Earth Engine with service account credentials.
+
+    Returns True once initialized. A failure (missing, revoked or otherwise
+    rejected key) is recorded and reported rather than raised, so the rest of
+    the platform — uploaded-image analysis, visualization, the UI itself —
+    still starts. Endpoints that genuinely need Earth Engine call
+    require_earth_engine() and answer 503 instead.
+    """
+    global _EE_INITIALIZED, _EE_ERROR
     if _EE_INITIALIZED:
         return True
-    
-    validate_service_account()
-    credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT_EMAIL, SERVICE_ACCOUNT_KEY_PATH)
-    ee.Initialize(credentials)
+
+    try:
+        validate_service_account()
+        credentials = ee.ServiceAccountCredentials(SERVICE_ACCOUNT_EMAIL, SERVICE_ACCOUNT_KEY_PATH)
+        ee.Initialize(credentials)
+    except Exception as exc:
+        _EE_ERROR = f"{type(exc).__name__}: {exc}"
+        print(f"⚠️  Earth Engine not available - {_EE_ERROR}")
+        print("   Satellite search / processing is disabled; uploaded-image (local) features still work.")
+        print("   Fix: put a valid service account key at backend/ee-service-account-key.json")
+        print("   or set EE_SERVICE_ACCOUNT_KEY in .env - see README \"Configuration\".")
+        return False
+
     _EE_INITIALIZED = True
+    _EE_ERROR = None
     print("Earth Engine initialized successfully")
     return True
+
+
+def earth_engine_status() -> Dict:
+    """Report whether Earth Engine is usable, and why not when it isn't."""
+    return {"ready": _EE_INITIALIZED, "error": _EE_ERROR}
+
+
+def require_earth_engine() -> None:
+    """Guard for endpoints that cannot do anything without Earth Engine.
+
+    Retries initialization first, so dropping in a valid key does not require a
+    server restart.
+    """
+    if _EE_INITIALIZED or init_earth_engine():
+        return
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            f"Earth Engine is not configured ({_EE_ERROR}). "
+            f"Provide a valid service account key at backend/ee-service-account-key.json "
+            f"or set EE_SERVICE_ACCOUNT_KEY in .env. Uploaded-image (local) analysis "
+            f"works without Earth Engine."
+        ),
+    )
 
 
 def bbox_to_geometry(bbox: List[float], geometry: Optional[Dict] = None) -> ee.Geometry:

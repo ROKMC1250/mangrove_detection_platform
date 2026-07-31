@@ -25,6 +25,7 @@ from ..services.earth_engine import (
     bbox_to_geometry,
     resolve_item_to_image,
     get_model_names,
+    require_earth_engine,
 )
 from ..services.downloader import (
     download_ee_image,
@@ -218,6 +219,7 @@ def process_image(req: ProcessImageRequest):
     makes heavy blocking calls (GEE download, rasterio, GPU upload) — keeping
     this on the event loop would serialise every concurrent request.
     """
+    require_earth_engine()  # outside the try: a 503 must not become a 500
     try:
         t0 = time.time()
         job_id = req.job_id or f"job-{int(t0)}"
@@ -397,6 +399,7 @@ def process_s1_image(req: ProcessImageRequest):
     S2-specific spectral pipeline (NDVI, AlphaEarth, cloud mask). The
     cached GeoTIFF is then consumed by /api/flood-segmentation/run.
     """
+    require_earth_engine()
     t0 = time.time()
     job_id = req.job_id or f"job-{int(t0)}"
     print(f"PROCESS S1 IMAGE - Using job_id: {job_id}")

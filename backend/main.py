@@ -29,7 +29,7 @@ from .core.config import (
 from .core.progress import PROGRESS_TRACKER
 
 # Initialize Earth Engine
-from .services.earth_engine import init_earth_engine
+from .services.earth_engine import init_earth_engine, earth_engine_status
 from .services.model_inference import init_model1, get_model1_status
 from .services.sam3_service import init_sam3, get_sam3_status
 from .services.flood_inference import init_flood_model, get_flood_model_status
@@ -51,7 +51,9 @@ from .api.routes_sam3 import router as sam3_router
 from .api.routes_session import router as session_router, SESSION_COOKIE
 
 
-# Initialize Earth Engine at module load
+# Initialize Earth Engine at module load. A credential failure is non-fatal:
+# the server still starts and local (uploaded-image) analysis keeps working,
+# while GEE-backed endpoints answer 503 with the reason.
 init_earth_engine()
 
 
@@ -176,6 +178,7 @@ async def get_config():
         "use_copernicus": True,
         "use_public_stac": False,
         "gcs_bucket_configured": bool(GCS_BUCKET),
+        "earth_engine": earth_engine_status(),
     }
 
 

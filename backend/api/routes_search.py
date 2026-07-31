@@ -14,6 +14,7 @@ from ..services.earth_engine import (
     get_s1_collection,
     build_feature_collection_simple,
     build_feature_collection_simple_s1,
+    require_earth_engine,
 )
 
 router = APIRouter(prefix="/api", tags=["search"])
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["search"])
 @router.post("/search-images")
 def search_images(req: SearchImagesRequest):
     """Search for Sentinel-2 SR images."""
+    require_earth_engine()  # outside the try: a 503 must not become a 500
     try:
         print(f"SEARCH - Starting search with params: start={req.start_date}, end={req.end_date}, cloud_max={req.cloud_cover_max}, limit={req.limit}")
         
@@ -76,6 +78,7 @@ def search_images(req: SearchImagesRequest):
 @router.post("/search-s1-images")
 def search_s1_images(req: SearchImagesRequest):
     """Search for Sentinel-1 GRD images."""
+    require_earth_engine()  # outside the try: a 503 must not become a 500
     try:
         print(f"S1 SEARCH - Starting search with params: start={req.start_date}, end={req.end_date}, limit={req.limit}")
         

@@ -178,6 +178,8 @@ Everything deployment-specific lives in **one file: `.env`** at the project root
 
 > `.env` and `backend/ee-service-account-key.json` are both git-ignored. Keep them that way — a committed service account key gives anyone read/write access to your Earth Engine and Cloud Storage quota.
 
+If the key is missing or rejected the server still starts: `/api/config` reports `earth_engine.ready = false` with the reason, Earth Engine endpoints answer `503` explaining how to fix it, and uploaded-image (local) analysis keeps working. That makes it possible to explore the UI before wiring up Google Cloud.
+
 ### Setting up Earth Engine access
 
 1. Create (or pick) a Google Cloud project and **enable the Earth Engine API**.

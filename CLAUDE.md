@@ -101,6 +101,7 @@ pip install -r backend/requirements.txt
 - **Progress tracking:** Long-running tasks use job IDs with phase-weighted progress, polled via `/api/progress`
 - **File serving:** `/api/proxy-file` streams files from `outputs/` directory with Range request support for large GeoTIFFs
 - **Model graceful degradation:** Segmentation model is optional; platform works without it for spectral analysis and visualization
+- **Earth Engine graceful degradation:** `init_earth_engine()` records failures instead of raising, so a missing/revoked key does not stop the server. `earth_engine_status()` feeds `/api/config`, and cloud entry points (`/api/search-images`, `/api/search-s1-images`, `/api/process-image`, `/api/process-s1-image`) call `require_earth_engine()` for a 503 with the reason. Call the guard *before* the handler's `try:` so it is not swallowed into a 500. This is deliberately cloud-path-only — the local path must keep working without GEE.
 - **Parallel downloads:** Mosaic builder uses 6 parallel workers for tile downloads from GEE
 - **In-memory caching:** Raster data, spectral indices, and visualization results are cached
 
