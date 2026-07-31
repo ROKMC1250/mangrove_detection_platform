@@ -64,8 +64,10 @@ $RECYCLE.BIN/
 *.svg
 *.ico
 
-# ===== ...but the app's own UI assets must ship =====
+# ===== ...but the app's own UI assets and the README demo must ship =====
 !frontend/assets/logo/
 !frontend/assets/logo/*
+!.github/media/
+!.github/media/*
 
 target_detector.py
