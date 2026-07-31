@@ -58,7 +58,7 @@ class TargetDetectionController {
 
         this.secondaryTargetMarkers = [];  // mirrors targetMarkers on secondary map (compare mode)
 
-        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.1
+        // Per-slot stash, frozen when the user flips Time A / Time B
         this._slotStash = { A: null, B: null };
         // Slot the currently-pending detection was kicked off on — used to
         // drop completions that arrive after the user has switched away.

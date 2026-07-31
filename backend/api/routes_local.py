@@ -25,12 +25,18 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..core.config import OUTPUTS_DIR
+from ..core.config import OUTPUTS_DIR, PROJECT_ROOT
 
 router = APIRouter(prefix="/api/local", tags=["local"])
 
-# Base directory for experiment results
-LOCAL_BASE_DIR = "/home/hjh1037/band_registration/refactored/experiment_results"
+# Base directory for the band-registration experiment results browsed in local
+# mode. Set LOCAL_BASE_DIR in .env to point at your own directory; relative
+# paths are resolved against the project root.
+LOCAL_BASE_DIR = os.environ.get("LOCAL_BASE_DIR", "").strip() or os.path.join(
+    PROJECT_ROOT, "experiment_results"
+)
+if not os.path.isabs(LOCAL_BASE_DIR):
+    LOCAL_BASE_DIR = os.path.join(PROJECT_ROOT, LOCAL_BASE_DIR)
 
 # Upload directory for user-uploaded GeoTIFFs
 UPLOAD_DIR = os.path.join(OUTPUTS_DIR, "uploads")

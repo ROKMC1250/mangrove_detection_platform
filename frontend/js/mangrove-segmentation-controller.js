@@ -15,8 +15,7 @@ class MangroveSegmentationController {
         this.overlayLayers = {};
 
         // Per-slot snapshot of results + overlay bookkeeping. Populated by
-        // _freezeToSlot when the user flips Time A / Time B. See plan
-        // /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.2.
+        // _freezeToSlot when the user flips Time A / Time B.
         this._slotStash = { A: null, B: null };
         // Slot the currently-pending segmentation was kicked off on — used to
         // drop completions that arrive after the user has switched away.

@@ -113,6 +113,10 @@ def init_sam3() -> bool:
             "SAM3_CHECKPOINT_DIR",
             os.path.join(PROJECT_ROOT, "repo", "sam3"),
         )
+        # A relative SAM3_CHECKPOINT_DIR (as written in .env) is resolved
+        # against the project root rather than the current directory.
+        if not os.path.isabs(checkpoint_dir):
+            checkpoint_dir = os.path.join(PROJECT_ROOT, checkpoint_dir)
 
         bpe_path = os.environ.get("SAM3_BPE_PATH")
         if not bpe_path:

@@ -48,10 +48,15 @@ if lsof -ti:8000 >/dev/null 2>&1; then
     sleep 1
 fi
 
-# Project env from run.sh (kept minimal here; run.sh is the canonical setup).
+# Project env (kept minimal here; run.sh is the canonical setup).
+# Deployment-specific values come from .env — see .env.example.
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 export EE_SERVICE_ACCOUNT_KEY="${EE_SERVICE_ACCOUNT_KEY:-$PROJECT_ROOT/backend/ee-service-account-key.json}"
-export GCS_BUCKET="${GCS_BUCKET:-mangrove-gee-exports-2025}"
-export GCS_BUCKET_REGION="${GCS_BUCKET_REGION:-asia-northeast3}"
 
 mkdir -p "$PROJECT_ROOT/logs"
 LOG="$PROJECT_ROOT/logs/server.log"

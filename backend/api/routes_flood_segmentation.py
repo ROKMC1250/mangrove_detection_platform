@@ -5,8 +5,7 @@ Mirrors the mangrove segmentation surface (run / apply-threshold / status)
 so the frontend can reuse the same threshold/overlay UI patterns. Adds an
 "eraser" pair (remove-blob / reset-exclusions) that lets the user click a
 false-positive water blob on the map to drop it from the binary mask via
-connected-component labelling — see the plan at
-/home/hjh1037/.claude/plans/robust-percolating-meadow.md.
+connected-component labelling.
 """
 
 import base64

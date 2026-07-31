@@ -10,6 +10,19 @@ from requests.adapters import HTTPAdapter
 # ===== Path Configuration =====
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, os.pardir))
+
+# ===== User configuration =====
+# Everything a new deployment needs to change lives in <project root>/.env.
+# Copy .env.example to .env and edit it; see the README "Configuration" section.
+# Variables already set in the real environment win over the file, so
+# `GCS_BUCKET=other-bucket bash run.sh` still overrides it.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=False)
+except ImportError:  # python-dotenv is optional - plain env vars still work
+    pass
+
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs")
 STATIC_MOUNT = "/static"
@@ -24,10 +37,31 @@ if MODEL_ROOT and MODEL_ROOT not in sys.path:
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 # ===== Earth Engine Configuration =====
-SERVICE_ACCOUNT_EMAIL = os.environ.get("EE_SERVICE_ACCOUNT", "hjh1037@gmail.com")
+# Point EE_SERVICE_ACCOUNT_KEY at your own service account JSON. Relative paths
+# resolve against the project root, so the default value works no matter which
+# directory the server was started from.
 SERVICE_ACCOUNT_KEY_PATH = os.environ.get(
     "EE_SERVICE_ACCOUNT_KEY", os.path.join(BASE_DIR, "ee-service-account-key.json")
 )
+if not os.path.isabs(SERVICE_ACCOUNT_KEY_PATH):
+    SERVICE_ACCOUNT_KEY_PATH = os.path.join(PROJECT_ROOT, SERVICE_ACCOUNT_KEY_PATH)
+
+
+def _resolve_service_account_email() -> str:
+    """Return the service account address, reading it from the key file if unset."""
+    explicit = os.environ.get("EE_SERVICE_ACCOUNT", "").strip()
+    if explicit:
+        return explicit
+    try:
+        import json
+
+        with open(SERVICE_ACCOUNT_KEY_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh).get("client_email", "")
+    except (OSError, ValueError):
+        return ""
+
+
+SERVICE_ACCOUNT_EMAIL = _resolve_service_account_email()
 
 # ===== GCS Configuration =====
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
@@ -142,7 +176,15 @@ def validate_service_account():
     if not os.path.exists(SERVICE_ACCOUNT_KEY_PATH):
         raise RuntimeError(
             f"Service account key not found at {SERVICE_ACCOUNT_KEY_PATH}. "
-            f"Please place your JSON key at backend/ee-service-account-key.json or set EE_SERVICE_ACCOUNT_KEY."
+            f"Place your Earth Engine service account JSON at "
+            f"backend/ee-service-account-key.json, or set EE_SERVICE_ACCOUNT_KEY "
+            f"in .env (see .env.example)."
+        )
+    if not SERVICE_ACCOUNT_EMAIL:
+        raise RuntimeError(
+            f"Could not determine the service account address: "
+            f"{SERVICE_ACCOUNT_KEY_PATH} has no 'client_email' field. "
+            f"Set EE_SERVICE_ACCOUNT in .env to override."
         )
     return True
 

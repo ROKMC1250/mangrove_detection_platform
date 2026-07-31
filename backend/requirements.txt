@@ -1,4 +1,5 @@
 fastapi>=0.111.0,<0.114
+python-dotenv>=1.0.0,<2
 uvicorn[standard]>=0.27.1,<0.29
 pydantic>=2.6.4,<3
 earthengine-api>=0.1.386

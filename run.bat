@@ -12,8 +12,17 @@ call venv\Scripts\activate.bat
 
 set PYTHONUNBUFFERED=1
 
-REM Set environment variables (adjust paths as needed)
-REM These can be overridden by system environment variables
+REM --- User configuration ---
+REM All deployment-specific settings live in .env (copy .env.example to .env and
+REM edit that one file). Keep comments on their own lines. Variables already set
+REM in the system environment take precedence.
+if exist "%~dp0.env" (
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%~dp0.env") do (
+        if not defined %%a set "%%a=%%b"
+    )
+)
+
+REM Earth Engine credentials
 if not defined EE_SERVICE_ACCOUNT (
     for /f "tokens=2 delims=:," %%a in ('findstr /c:"client_email" backend\ee-service-account-key.json') do (
         set EE_SERVICE_ACCOUNT=%%a
@@ -30,13 +39,8 @@ if not defined GOOGLE_APPLICATION_CREDENTIALS (
     set GOOGLE_APPLICATION_CREDENTIALS=%EE_SERVICE_ACCOUNT_KEY%
 )
 
-if not defined GCS_BUCKET (
-    set GCS_BUCKET=mangrove-gee-exports-2025
-)
-
-if not defined GCS_BUCKET_REGION (
-    set GCS_BUCKET_REGION=asia-northeast3
-)
+REM GCS is optional - set GCS_BUCKET / GCS_BUCKET_REGION in .env to enable
+REM server-side GeoTIFF export for large AOIs.
 
 REM MODEL paths - these should be set by user or left empty to disable model
 REM if not defined MODEL1_LOG_DIR (

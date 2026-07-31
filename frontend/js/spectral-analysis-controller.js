@@ -16,7 +16,7 @@ class SpectralAnalysisController {
         this.results = [];  // Array of computed index results
         this.overlayLayers = {};  // layerId → true (managed via mapManager or localImage)
 
-        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.4
+        // Per-slot stash, frozen when the user flips Time A / Time B
         this._slotStash = { A: null, B: null };
         this._originSlot = null;  // stamped at computeIndex kickoff
 

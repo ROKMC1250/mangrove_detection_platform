@@ -36,11 +36,28 @@ export VIRTUAL_ENV="$PROJECT_ROOT/venv"
 export PATH="$VIRTUAL_ENV/bin:$PATH"
 unset PYTHONHOME
 
-# Set Earth Engine credentials (adjust paths if needed)
+# --- User configuration ---
+# All deployment-specific settings live in .env — copy .env.example to .env and
+# edit that one file. Variables already exported in your shell take precedence.
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# Earth Engine credentials
 if [ -z "${EE_SERVICE_ACCOUNT_KEY:-}" ]; then
     export EE_SERVICE_ACCOUNT_KEY="$PROJECT_ROOT/backend/ee-service-account-key.json"
 fi
 
+# Resolve a relative key path against the project root
+case "$EE_SERVICE_ACCOUNT_KEY" in
+    /*) ;;
+    *) export EE_SERVICE_ACCOUNT_KEY="$PROJECT_ROOT/$EE_SERVICE_ACCOUNT_KEY" ;;
+esac
+
+# The service account address is read from the key file when not set explicitly
 if [ -z "${EE_SERVICE_ACCOUNT:-}" ] && [ -f "$EE_SERVICE_ACCOUNT_KEY" ]; then
     if command -v jq &> /dev/null; then
         export EE_SERVICE_ACCOUNT="$(jq -r .client_email "$EE_SERVICE_ACCOUNT_KEY")"
@@ -51,14 +68,8 @@ if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
     export GOOGLE_APPLICATION_CREDENTIALS="$EE_SERVICE_ACCOUNT_KEY"
 fi
 
-# Set GCS bucket (can be overridden by environment variables)
-if [ -z "${GCS_BUCKET:-}" ]; then
-    export GCS_BUCKET="mangrove-gee-exports-2025"
-fi
-
-if [ -z "${GCS_BUCKET_REGION:-}" ]; then
-    export GCS_BUCKET_REGION="asia-northeast3"
-fi
+# GCS is optional — set GCS_BUCKET / GCS_BUCKET_REGION in .env to enable
+# server-side GeoTIFF export for large AOIs.
 
 # Model paths - set these environment variables if you have models
 # If not set, the segmentation model will be disabled but other features will work

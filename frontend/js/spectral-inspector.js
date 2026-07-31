@@ -26,7 +26,7 @@ class SpectralInspectorController {
 
         this._boundPointClick = this._handlePointClick.bind(this);
 
-        // Per-slot stash: see /home/hjh1037/.claude/plans/2-quiet-metcalfe.md §1.5
+        // Per-slot stash, frozen when the user flips Time A / Time B
         this._slotStash = { A: null, B: null };
 
         this.init();
