@@ -1,36 +1,40 @@
-.outputs/
-.DS_Store
-.vscode/
+# ===== Credentials — never commit =====
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+backend/ee-service-account-key.json
+*service-account*.json
+*-key.json
+*.pem
+*.p12
 
-*.pt
-*.png
-*.tif
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.tiff
-*.webp
-*.svg
-*.ico
-*.png
-*.jpg
-*.jpeg
-.vscode/
-target_detector.py
-
-# Python virtual environment
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
 env/
 ENV/
 .venv/
 
-# Windows
+# ===== Runtime output & logs =====
+outputs/
+.outputs/
+logs/
+*.log
+
+# ===== Local documentation & internal material (not published) =====
+docs/
+frontend/Telepix_design/
+
+# ===== Editor / tooling state =====
+.vscode/
+.claude/
+.agents/
+.codex/
+.DS_Store
 Thumbs.db
 ehthumbs.db
 Desktop.ini
@@ -39,3 +43,29 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+
+# ===== Model weights & large media =====
+# Checkpoints already committed through Git LFS stay tracked despite these rules.
+*.pt
+*.pth
+# The demo video ships as a GitHub Release asset, not as a repo file.
+*.mp4
+*.mov
+
+# ===== Imagery & generated rasters =====
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.svg
+*.ico
+
+# ===== ...but the app's own UI assets must ship =====
+!frontend/assets/logo/
+!frontend/assets/logo/*
+
+target_detector.py
