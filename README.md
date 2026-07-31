@@ -7,6 +7,7 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
 ![CUDA](https://img.shields.io/badge/CUDA%20accelerated-76B900?logo=nvidia&logoColor=white)
 ![Earth Engine](https://img.shields.io/badge/Google%20Earth%20Engine-4285F4?logo=google&logoColor=white)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey)
 
 Everything runs on your own machine with your own Google Earth Engine credentials — there is no hosted service. **The whole pipeline is GPU-accelerated**: rasters stay resident on the GPU between steps, indices and detectors are computed as batched tensor operations, and segmentation runs as batched patch inference, so re-thresholding or switching band combinations is interactive instead of a re-run. Without a GPU it falls back to CPU and simply runs slower.
 
@@ -16,7 +17,7 @@ Everything runs on your own machine with your own Google Earth Engine credential
 
 ![EarthScope walkthrough](.github/media/earthscope-demo.gif)
 
-<sub>Complete walkthrough, 3× speed. [Original 1080p recording ↗](https://github.com/ROKMC1250/mangrove_detection_platform/releases/download/v2.0/EarthScope_2.mp4)</sub>
+<sub>Complete walkthrough, 3× speed. [Original 1080p recording ↗](https://github.com/ROKMC1250/Earthscope/releases/download/v2.0/EarthScope_2.mp4)</sub>
 
 ---
 
@@ -51,8 +52,8 @@ Everything runs on your own machine with your own Google Earth Engine credential
 ### 1. Get the code
 
 ```bash
-git clone https://github.com/ROKMC1250/mangrove_detection_platform.git
-cd mangrove_detection_platform
+git clone https://github.com/ROKMC1250/Earthscope.git
+cd Earthscope
 git lfs install && git lfs pull      # fetches the segmentation checkpoints
 ```
 
@@ -109,6 +110,14 @@ Model choice, patch size, overlap and test-time augmentation are set in `backend
 If the key is missing or rejected the server still starts: satellite search returns a clear error explaining what to fix, and analysis of uploaded images keeps working. The mangrove, flood and SAM3 models are each optional too — whatever is unavailable simply reports itself as such.
 
 ---
+
+## License
+
+**[PolyForm Noncommercial License 1.0.0](LICENSE) — noncommercial use only.**
+
+You may use, modify and redistribute EarthScope for any noncommercial purpose: personal projects, study and research, and use by educational institutions, public research bodies, government institutions and nonprofit organizations. **Commercial use is not permitted** — for a commercial licence, contact the copyright holder.
+
+Third-party code, model weights and fonts included in this repository remain under their own licenses.
 
 ## Acknowledgements
 
